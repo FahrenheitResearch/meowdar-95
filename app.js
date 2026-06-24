@@ -104,7 +104,8 @@ SITES = restrictRadarSiteCatalog(SITES);
 
 const PRODUCTS = {
   REF: { name: "Reflectivity", short: "Reflectivity" },
-  DVEL: { name: "Velocity", short: "Velocity" },
+  VEL: { name: "Velocity", short: "Velocity" },
+  DVEL: { name: "Region dealiased velocity", short: "Region dealias" },
   CC: { name: "Correlation coefficient", short: "Correlation" },
 };
 
@@ -2722,11 +2723,16 @@ function nativePolarPlaybackEnabled() {
     && state.profile === "full"
     && state.source !== "preview"
     && typeof state.toolbox?.renderNativePpi === "function"
+    && nativePolarSupportsCurrentProduct()
     && currentFrameCount() > 1;
 }
 
 function nativePolarAllowedForCurrentFrame() {
-  return !playbackLoopActive();
+  return nativePolarSupportsCurrentProduct() && !playbackLoopActive();
+}
+
+function nativePolarSupportsCurrentProduct() {
+  return state.product !== "DVEL";
 }
 
 function adaptiveFrameCacheLimit() {
@@ -3346,6 +3352,7 @@ function momentMatchesProduct(moment, product) {
   const target = String(product || "").toUpperCase();
   if (value === target) return true;
   if (target === "REF") return ["REF", "DBZ", "DBZH", "TH"].includes(value);
+  if (target === "VEL") return ["VEL", "BV", "VRAD", "VRADH"].includes(value);
   if (target === "DVEL") return ["DVEL", "VEL", "BV", "VRAD", "VRADH"].includes(value);
   if (target === "CC") return ["CC", "RHO", "RHOHV"].includes(value);
   return false;
@@ -4171,7 +4178,7 @@ function drawDemoRadar(canvas, frameIndex, product, siteCode) {
   ctx.restore();
 
   if (product === "REF") drawReflectivity(ctx, w, h, phase, siteOffset);
-  if (product === "DVEL") drawVelocity(ctx, w, h, phase, false);
+  if (product === "VEL" || product === "DVEL") drawVelocity(ctx, w, h, phase, false);
   if (product === "CC") drawCorrelation(ctx, w, h, phase);
 
   ctx.save();

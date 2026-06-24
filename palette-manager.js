@@ -3,6 +3,7 @@ const SETTINGS_KEY = "meowdar:palette-settings:v1";
 
 const PRODUCT_META = {
   REF: { family: "reflectivity", code: "BR", units: "dBZ", floor: -20 },
+  VEL: { family: "velocity", code: "BV", units: "kt", floor: null },
   DVEL: { family: "velocity", code: "BV", units: "kt", floor: null },
   CC: { family: "correlationCoefficient", code: "CC", units: "", floor: null },
 };
@@ -127,6 +128,22 @@ function paletteProduct(palette) {
   if (family === "velocity") return "DVEL";
   if (family === "correlationCoefficient") return "CC";
   return "REF";
+}
+
+function productFamily(product) {
+  return PRODUCT_META[product]?.family || PRODUCT_META.REF.family;
+}
+
+function productLabel(product) {
+  const family = productFamily(product);
+  if (family === "velocity") return "velocity";
+  if (family === "correlationCoefficient") return "correlation";
+  return "reflectivity";
+}
+
+function defaultPaletteForProduct(product) {
+  const family = productFamily(product);
+  return clone(BUILTINS.find((palette) => palette.family === family) || null);
 }
 
 function colorAt(palette, value) {
@@ -278,7 +295,7 @@ export class PaletteManager {
     this.store = null;
     this.palettes = this.loadPalettes();
     this.settings = {
-      active: { REF: "default", DVEL: "default", CC: "default" },
+      active: { REF: "default", VEL: "default", DVEL: "default", CC: "default" },
       dbzFloor: -10,
       velocityDeadband: 0,
       ccFloor: 0.2,
@@ -337,16 +354,17 @@ export class PaletteManager {
 
   activeBasePalette(product = this.product()) {
     const id = this.activeId(product);
-    if (id === "default") return clone(BUILTINS.find((palette) => paletteProduct(palette) === product) || null);
+    if (id === "default") return defaultPaletteForProduct(product);
     return clone(this.listForProduct(product).find((palette) => palette.id === id) || null);
   }
 
   renderPalette(product = this.product()) {
     let palette = this.activeBasePalette(product);
     if (!palette) return null;
-    if (product === "REF") palette = applyReflectivityFloor(palette, Number(this.settings.dbzFloor));
-    else if (product === "DVEL") palette = applyVelocityDeadband(palette, Number(this.settings.velocityDeadband));
-    else if (product === "CC") palette = applyCorrelationFloor(palette, Number(this.settings.ccFloor));
+    const family = productFamily(product);
+    if (family === "reflectivity") palette = applyReflectivityFloor(palette, Number(this.settings.dbzFloor));
+    else if (family === "velocity") palette = applyVelocityDeadband(palette, Number(this.settings.velocityDeadband));
+    else if (family === "correlationCoefficient") palette = applyCorrelationFloor(palette, Number(this.settings.ccFloor));
     if (this.settings.rangeFoldMode === "hide") palette.rangeFolded = [0, 0, 0, 0];
     else if (this.settings.rangeFoldMode === "custom") palette.rangeFolded = hexToRgba(this.settings.rangeFoldColor, 255);
     return palette;
@@ -413,12 +431,13 @@ export class PaletteManager {
   open() {
     const product = this.product();
     const current = this.activeId(product);
+    const family = productFamily(product);
     this.ui.select.replaceChildren(new Option("Operational", "default"));
     for (const palette of this.listForProduct(product).filter((item) => !String(item.id).startsWith("builtin-"))) this.ui.select.add(new Option(palette.name, palette.id));
     this.ui.select.value = [...this.ui.select.options].some((option) => option.value === current) ? current : "default";
-    this.ui.floorRow.hidden = product !== "REF";
-    this.ui.velocityDeadbandRow.hidden = product !== "DVEL";
-    this.ui.ccFloorRow.hidden = product !== "CC";
+    this.ui.floorRow.hidden = family !== "reflectivity";
+    this.ui.velocityDeadbandRow.hidden = family !== "velocity";
+    this.ui.ccFloorRow.hidden = family !== "correlationCoefficient";
     this.ui.floor.value = String(Number.isFinite(Number(this.settings.dbzFloor)) ? this.settings.dbzFloor : -10);
     this.ui.floorValue.textContent = `${this.ui.floor.value} dBZ`;
     this.ui.velocityDeadband.value = String(Number.isFinite(Number(this.settings.velocityDeadband)) ? this.settings.velocityDeadband : 0);
@@ -435,7 +454,7 @@ export class PaletteManager {
   select(id, updateSetting = false) {
     const product = this.product();
     if (updateSetting) this.settings.active[product] = id;
-    const palette = id === "default" ? clone(BUILTINS.find((item) => paletteProduct(item) === product)) : clone(this.allPalettes().find((item) => item.id === id));
+    const palette = id === "default" ? defaultPaletteForProduct(product) : clone(this.allPalettes().find((item) => item.id === id));
     this.draft = palette;
     this.originalDraftSignature = paletteContentSignature(palette);
     this.ui.name.value = id === "default" ? "Operational" : palette?.name || "Custom palette";
@@ -538,10 +557,10 @@ export class PaletteManager {
       palette = normalizePalette(palette, targetProduct);
       this.savePalette(palette);
       this.settings.active[targetProduct] = palette.id;
+      if (productFamily(targetProduct) === productFamily(this.product())) this.settings.active[this.product()] = palette.id;
       this.persist();
-      if (targetProduct === this.product()) this.open();
-      const label = targetProduct === "DVEL" ? "velocity" : targetProduct === "CC" ? "correlation" : "reflectivity";
-      this.toast(`Imported ${palette.name} for ${label}`);
+      if (productFamily(targetProduct) === productFamily(this.product())) this.open();
+      this.toast(`Imported ${palette.name} for ${productLabel(targetProduct)}`);
     } catch (error) {
       this.toast(`Palette import failed: ${error.message || error}`);
     } finally {

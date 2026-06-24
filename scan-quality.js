@@ -1,5 +1,6 @@
 const PRODUCT_MOMENTS = {
   REF: ["DREF", "REF", "DBZ", "DZ", "ZH", "Z"],
+  VEL: ["VEL", "VELH", "VR", "VE", "BV", "V"],
   DVEL: ["DVEL", "VEL", "VELH", "VR", "VE", "BV", "V"],
   CC: ["CC", "RHOHV", "RHO", "RHV", "CCOR"],
 };
@@ -21,6 +22,7 @@ export function momentMatchesProduct(name, product) {
   if (!normalized) return false;
   if (PRODUCT_MOMENTS[product]?.includes(normalized)) return true;
   if (product === "REF") return /^(D?REF|DBZ|DZ|ZH?|Z)\d*$/.test(normalized);
+  if (product === "VEL") return /^(VELH?|VR|VE|BV|V)\d*$/.test(normalized);
   if (product === "DVEL") return /^(D?VEL|VELH?|VR|VE|BV|V)\d*$/.test(normalized);
   if (product === "CC") return /^(CC|CCOR|RHO(HV)?|RHV)\d*$/.test(normalized);
   return false;

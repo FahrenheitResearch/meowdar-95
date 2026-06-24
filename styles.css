@@ -263,7 +263,7 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
   .radar-stage { min-height: 430px; }
   .control-column, .inspector-column { width: 100%; }
   .win-field { grid-template-columns: 105px minmax(0,1fr); }
-  .product-grid { grid-template-columns: repeat(3,1fr); }
+  .product-grid { grid-template-columns: repeat(2,1fr); }
   .product-grid button { justify-content: center; font-size: 11px; }
   .product-chip { display: none; }
   .site-pill em { display: none !important; }
