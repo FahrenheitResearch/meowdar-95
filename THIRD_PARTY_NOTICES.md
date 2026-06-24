@@ -62,6 +62,17 @@ installer copies the upstream license beside the vendored ESM/WASM files.
 Upstream repository:
 https://github.com/usnistgov/h5wasm
 
+## shpjs
+
+Client-side shapefile import uses the vendored `shpjs` browser bundle, pinned to
+`6.2.0`. It is loaded only when a visitor imports a shapefile overlay.
+
+Upstream repository:
+https://github.com/calvinmetcalf/shapefile-js
+
+License:
+MIT. See `vendor/shpjs/LICENSE.md`.
+
 ## NOAA NEXRAD and GOES data
 
 BowEcho retrieves public NEXRAD Level II data directly in the visitor's browser.

@@ -45,8 +45,8 @@ button:disabled, select:disabled, input:disabled { color: #808080; text-shadow: 
 .menu-bar button { min-height: 22px; padding: 2px 7px; background: transparent; border: 0; }
 .menu-bar button:active, .menu-bar button:hover { color: #fff; background: var(--selection); }
 .tool-bar { min-height: 38px; display: flex; align-items: center; gap: 4px; padding: 4px; border-top: 1px solid var(--white); border-bottom: 1px solid var(--shadow); overflow: hidden; }
-.tool-button, .wide-button, .transport-buttons button, .empty-layer button, .palette-actions button, .palette-apply { min-height: 27px; padding: 4px 8px; background: var(--face); border-top: 2px solid var(--white); border-left: 2px solid var(--white); border-right: 2px solid var(--black); border-bottom: 2px solid var(--black); }
-.tool-button:active, .wide-button:active, .transport-buttons button:active, .empty-layer button:active, .palette-actions button:active, .palette-apply:active { border-top-color: var(--black); border-left-color: var(--black); border-right-color: var(--white); border-bottom-color: var(--white); transform: translate(1px,1px); }
+.tool-button, .wide-button, .transport-buttons button, .empty-layer button, .palette-actions button, .palette-apply, .overlay-actions button, .overlay-row button { min-height: 27px; padding: 4px 8px; background: var(--face); border-top: 2px solid var(--white); border-left: 2px solid var(--white); border-right: 2px solid var(--black); border-bottom: 2px solid var(--black); }
+.tool-button:active, .wide-button:active, .transport-buttons button:active, .empty-layer button:active, .palette-actions button:active, .palette-apply:active, .overlay-actions button:active, .overlay-row button:active { border-top-color: var(--black); border-left-color: var(--black); border-right-color: var(--white); border-bottom-color: var(--white); transform: translate(1px,1px); }
 .primary-tool { font-weight: 700; }
 .tool-separator { width: 2px; height: 28px; margin: 0 2px; border-left: 1px solid var(--shadow); border-right: 1px solid var(--white); }
 .toolbar-spacer { flex: 1; }
@@ -87,6 +87,18 @@ select, input[type="date"], input[type="time"], input[type="text"], input[type="
 .check-row input { appearance: none; width: 15px; height: 15px; margin: 0; background: #fff; border-top: 2px solid var(--shadow); border-left: 2px solid var(--shadow); border-right: 2px solid var(--white); border-bottom: 2px solid var(--white); }
 .check-row input:checked::after { content: "✓"; display: block; font-size: 14px; line-height: 10px; font-weight: 700; transform: translate(1px,1px); }
 .mini-status { min-height: 22px; margin-top: 5px; padding: 3px 5px; background: #dedede; border-top: 1px solid var(--shadow); border-left: 1px solid var(--shadow); border-right: 1px solid var(--white); border-bottom: 1px solid var(--white); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlay-actions { display: grid; grid-template-columns: 1fr 64px; gap: 5px; margin-top: 6px; }
+.overlay-list { display: grid; gap: 5px; margin-top: 6px; }
+.overlay-row { display: grid; grid-template-columns: 18px minmax(0,1fr) 28px; gap: 5px; align-items: center; padding: 5px; background: #e8e8e8; border-top: 1px solid var(--white); border-left: 1px solid var(--white); border-right: 1px solid var(--shadow); border-bottom: 1px solid var(--shadow); }
+.overlay-row input[type="checkbox"] { width: 14px; height: 14px; margin: 0; }
+.overlay-row b, .overlay-row small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.overlay-row b { display: block; color: #000080; font-size: 11px; }
+.overlay-row small { display: block; color: #404040; }
+.overlay-row input[type="color"] { width: 26px; height: 24px; padding: 0; border: 1px solid #000; }
+.overlay-row .overlay-range { grid-column: 1 / -1; display: grid; grid-template-columns: 58px minmax(0,1fr) 44px 44px; gap: 4px; align-items: center; }
+.overlay-row .overlay-range input[type="range"] { width: 100%; }
+.overlay-row .overlay-range button { min-height: 24px; padding: 2px 5px; }
+.overlay-row .overlay-label { min-width: 0; }
 .memory-meter { position: relative; height: 23px; margin-top: 6px; padding: 3px 5px; background: #fff; border-top: 2px solid var(--shadow); border-left: 2px solid var(--shadow); border-right: 2px solid var(--white); border-bottom: 2px solid var(--white); overflow: hidden; }
 .memory-meter span { position: relative; z-index: 2; }
 .memory-meter i { position: absolute; z-index: 1; left: 2px; bottom: 2px; top: 2px; width: 22%; background: #000080; opacity: .25; }
@@ -240,6 +252,11 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
 .maplibregl-ctrl-group { border-radius: 0 !important; box-shadow: 1px 1px 0 #000 !important; }
 .maplibregl-ctrl-group button { border-radius: 0 !important; }
 .maplibregl-ctrl-attrib { font-size: 9px !important; background: rgba(255,255,255,.83) !important; }
+.maplibregl-popup-content { border-radius: 0 !important; box-shadow: 2px 2px 0 rgba(0,0,0,.45) !important; font: 11px var(--font); }
+.overlay-popup strong { display: block; margin-bottom: 4px; color: #000080; }
+.overlay-popup table { border-collapse: collapse; max-width: 290px; }
+.overlay-popup th, .overlay-popup td { padding: 2px 4px; border-top: 1px solid #d0d0d0; text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+.overlay-popup th { max-width: 110px; color: #404040; }
 
 .button-spinner { display: none; width: 12px; height: 12px; border: 2px dotted #000; border-radius: 50%; animation: spin .7s linear infinite; }
 #loadButton.loading .button-spinner { display: inline-block; }
@@ -287,6 +304,7 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
   .catalog-day { grid-template-columns: 76px 46px minmax(0,1fr); gap: 5px; padding: 6px; }
   .catalog-target-head { align-items: flex-start; }
   .catalog-radar-row button { flex: 1 1 88px; }
+  .overlay-row .overlay-range { grid-template-columns: 48px minmax(0,1fr) 40px 40px; }
 }
 
 @media (max-width: 430px) {

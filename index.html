@@ -8,9 +8,9 @@
   <link rel="icon" href="data:,">
   <title>Meowdar 95</title>
   <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
-  <link rel="stylesheet" href="./styles.css?v=catalog-tornado-targets-2">
-    <script src="./config.js?v=catalog-tornado-targets-2"></script>
-    <script type="module" src="./app.js?v=catalog-tornado-targets-2"></script>
+  <link rel="stylesheet" href="./styles.css?v=shapefile-overlays-3">
+    <script src="./config.js?v=shapefile-overlays-3"></script>
+    <script type="module" src="./app.js?v=shapefile-overlays-3"></script>
 </head>
 <body>
   <a class="skip-link" href="#radarStage">Skip to radar</a>
@@ -113,6 +113,13 @@
             <legend>Overlays</legend>
             <label class="check-row"><input id="lightningToggle" type="checkbox"><span>GOES GLM lightning</span></label>
             <label class="win-field" for="lightningWindow"><span>Window</span><select id="lightningWindow"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="10">10 minutes</option></select></label>
+            <div class="overlay-actions">
+              <button id="importOverlayButton" type="button">Import shapefile</button>
+              <button id="clearOverlaysButton" type="button">Clear</button>
+              <input id="overlayFile" type="file" accept=".zip,.shp,.shx,.dbf,.prj,.cpg,.geojson,.json,application/zip,application/geo+json,application/json" multiple hidden>
+            </div>
+            <div class="mini-status" id="overlayStatus">No custom overlays</div>
+            <div class="overlay-list" id="overlayList"></div>
           </fieldset>
 
           <fieldset class="win-group">

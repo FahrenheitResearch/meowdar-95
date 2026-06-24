@@ -40,6 +40,13 @@ window.MEOWDAR_CONFIG = {
       "https://cdn.jsdelivr.net/npm/maplibre-gl@5.24.0/dist/maplibre-gl.css"
     ],
   },
+  overlays: {
+    shpParserUrl: "./vendor/shpjs/shp.min.js",
+    shpParserFallbackUrls: [
+      "https://unpkg.com/shpjs@6.2.0/dist/shp.min.js",
+      "https://cdn.jsdelivr.net/npm/shpjs@6.2.0/dist/shp.min.js"
+    ]
+  },
   livePollMs: 60000,
   waitingSweepPollMs: 4000,
   glm: {

@@ -175,6 +175,19 @@ const MAP = {
   polarLayerId: "meowdar-polar-radar-layer",
 };
 
+const OVERLAY_CONFIG = MAP_CONFIG.overlays || {};
+const SHP_PARSER_URL = OVERLAY_CONFIG.shpParserUrl || "./vendor/shpjs/shp.min.js";
+const SHP_PARSER_FALLBACK_URLS = Array.isArray(OVERLAY_CONFIG.shpParserFallbackUrls)
+  ? OVERLAY_CONFIG.shpParserFallbackUrls
+  : [
+    "https://unpkg.com/shpjs@6.2.0/dist/shp.min.js",
+    "https://cdn.jsdelivr.net/npm/shpjs@6.2.0/dist/shp.min.js",
+  ];
+const OVERLAY_DB_NAME = "meowdar-custom-overlays-v1";
+const OVERLAY_DB_STORE = "overlays";
+const OVERLAY_COLORS = ["#00ffff", "#ffcc00", "#ff4f9a", "#7cff59", "#b88cff", "#ff7a2f", "#ffffff"];
+const OVERLAY_LAYER_TYPES = ["fill", "line", "circle"];
+
 const state = {
   ...DEFAULTS,
   frameIndex: DEFAULTS.loopCount - 1,
@@ -249,6 +262,13 @@ const state = {
     reportsCache: new Map(),
     tornadoTargetCache: new Map(),
   },
+  overlays: {
+    items: [],
+    parserPromise: null,
+    storageLoaded: false,
+    storageError: null,
+    popup: null,
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -312,6 +332,11 @@ const ui = {
   catalogCount: $("catalogCount"),
   catalogDayList: $("catalogDayList"),
   catalogDetail: $("catalogDetail"),
+  importOverlayButton: $("importOverlayButton"),
+  clearOverlaysButton: $("clearOverlaysButton"),
+  overlayFile: $("overlayFile"),
+  overlayStatus: $("overlayStatus"),
+  overlayList: $("overlayList"),
   previousButton: $("previousButton"),
   playButton: $("playButton"),
   nextButton: $("nextButton"),
@@ -370,6 +395,9 @@ function initialize() {
   syncControls();
   refreshDemoTimes();
   renderPreview();
+  renderOverlayList();
+  installOverlayDebugApi();
+  void restoreSavedOverlays();
   if (!STATIC_PREVIEW && URL_PARAMS.get("static") !== "1" && window.location.protocol !== "file:") {
     initializeMap();
   } else {
@@ -383,6 +411,58 @@ function initialize() {
     if (previewParams.get("glm") === "1") setTimeout(() => state.glm?.setEnabled(true), 0);
     if (previewParams.get("palette") === "1") setTimeout(() => state.paletteManager?.open(), 0);
   }
+}
+
+function installOverlayDebugApi() {
+  if (!LOCAL_LOOP_TEST_HOSTS.has(window.location.hostname)) return;
+  window.__MEOWDAR_OVERLAY_DEBUG__ = {
+    importGeoJson: async (name, geojson) => {
+      const collections = normalizeOverlayGeoJson(geojson, name || "Debug GeoJSON");
+      const overlays = [];
+      for (const collection of collections) overlays.push(await addCustomOverlay(collection, { name: collection.fileName || name, sourceType: "Debug GeoJSON" }));
+      return overlays.map(overlayDebugSummary);
+    },
+    importShapefileZip: async (name, bytes) => {
+      const parser = await ensureShapefileParser();
+      const input = bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes || []).buffer;
+      const collections = normalizeOverlayGeoJson(await parser(input), name || "Debug shapefile");
+      const overlays = [];
+      for (const collection of collections) overlays.push(await addCustomOverlay(collection, { name: collection.fileName || name, sourceType: "Debug shapefile" }));
+      return overlays.map(overlayDebugSummary);
+    },
+    clear: async () => {
+      for (const overlay of state.overlays.items) removeOverlayMapLayers(overlay.id);
+      state.overlays.items = [];
+      renderOverlayList();
+      await clearOverlayStore();
+      return [];
+    },
+    list: () => state.overlays.items.map(overlayDebugSummary),
+    layers: () => state.overlays.items.map((overlay) => ({
+      id: overlay.id,
+      layers: OVERLAY_LAYER_TYPES.map((type) => {
+        const layerId = overlayLayerId(overlay.id, type);
+        return {
+          id: layerId,
+          exists: Boolean(state.map?.getLayer?.(layerId)),
+          visibility: state.map?.getLayoutProperty?.(layerId, "visibility") || "",
+        };
+      }),
+    })),
+  };
+}
+
+function overlayDebugSummary(overlay) {
+  return {
+    id: overlay.id,
+    name: overlay.name,
+    sourceType: overlay.sourceType,
+    featureCount: overlay.featureCount,
+    geometrySummary: overlay.geometrySummary,
+    bounds: overlay.bounds,
+    visible: overlay.visible,
+    opacity: overlay.opacity,
+  };
 }
 
 function bindEvents() {
@@ -527,6 +607,39 @@ function bindEvents() {
     if (!button) return;
     const target = catalogTargetById(button.dataset.catalogTarget);
     if (target) void loadCatalogTarget(target);
+  });
+  ui.importOverlayButton?.addEventListener("click", () => ui.overlayFile?.click());
+  ui.overlayFile?.addEventListener("change", () => {
+    const files = Array.from(ui.overlayFile.files || []);
+    ui.overlayFile.value = "";
+    if (files.length) void importOverlayFiles(files);
+  });
+  ui.clearOverlaysButton?.addEventListener("click", () => void clearCustomOverlays());
+  ui.overlayList?.addEventListener("change", (event) => {
+    const toggle = event.target.closest("input[data-overlay-visible]");
+    if (toggle) {
+      updateOverlay(toggle.dataset.overlayVisible, { visible: toggle.checked });
+      return;
+    }
+    const color = event.target.closest("input[data-overlay-color]");
+    if (color) updateOverlay(color.dataset.overlayColor, { color: color.value });
+  });
+  ui.overlayList?.addEventListener("input", (event) => {
+    const opacity = event.target.closest("input[data-overlay-opacity]");
+    if (opacity) {
+      const label = opacity.closest(".overlay-range")?.querySelector("span");
+      if (label) label.textContent = `${opacity.value}%`;
+      updateOverlay(opacity.dataset.overlayOpacity, { opacity: Number(opacity.value) / 100 });
+    }
+  });
+  ui.overlayList?.addEventListener("click", (event) => {
+    const fit = event.target.closest("button[data-overlay-fit]");
+    if (fit) {
+      fitOverlayToMap(fit.dataset.overlayFit);
+      return;
+    }
+    const remove = event.target.closest("button[data-overlay-remove]");
+    if (remove) void removeCustomOverlay(remove.dataset.overlayRemove);
   });
 
   ui.previousButton.addEventListener("click", () => void stepFrame(-1));
@@ -1076,8 +1189,10 @@ async function initializeMap() {
       updateSitePillPositions();
       if (state.radarLayer || state.source === "preview") mountRadarCanvas(state.radarLayer);
       if (POLAR_RENDER_EXPERIMENT && state.polarLayerData && ensurePolarRadarLayer()) setRadarRasterFallbackVisible(false);
+      syncOverlayLayers();
       state.glm?.mapReady();
     });
+    state.map.on("click", handleOverlayMapClick);
     state.map.on("error", (event) => {
       if (!state.mapReady) console.info("Basemap resource error; retaining static fallback.", event?.error || event);
     });
@@ -1938,6 +2053,675 @@ async function loadCatalogTarget(target) {
   ui.catalogDialog?.close();
   showToast(`Loading ${site} ${String(report.kind || "report")} target at ${state.archiveLink.time}Z`);
   await loadRadar();
+}
+
+async function importOverlayFiles(files) {
+  const list = Array.from(files || []).filter(Boolean);
+  if (!list.length) return;
+  setOverlayStatus(`Importing ${list.length} file${list.length === 1 ? "" : "s"}...`);
+  let imported = 0;
+  const errors = [];
+
+  try {
+    const geoJsonFiles = list.filter((file) => ["geojson", "json"].includes(fileExtension(file.name)));
+    for (const file of geoJsonFiles) {
+      try {
+        imported += await importGeoJsonOverlayFile(file);
+      } catch (error) {
+        errors.push(`${file.name}: ${friendlyError(error)}`);
+      }
+    }
+
+    const zipFiles = list.filter((file) => fileExtension(file.name) === "zip");
+    for (const file of zipFiles) {
+      try {
+        imported += await importShapefileZip(file);
+      } catch (error) {
+        errors.push(`${file.name}: ${friendlyError(error)}`);
+      }
+    }
+
+    const looseCount = await importLooseShapefileGroups(list, errors);
+    imported += looseCount;
+  } finally {
+    renderOverlayList();
+    syncOverlayLayers();
+  }
+
+  if (imported) {
+    const suffix = errors.length ? `; ${errors.length} skipped` : "";
+    setOverlayStatus(`${state.overlays.items.length} custom overlay${state.overlays.items.length === 1 ? "" : "s"}${suffix}`);
+    showToast(`Imported ${imported} overlay${imported === 1 ? "" : "s"}${suffix}`);
+  } else {
+    const message = errors[0] || "No supported shapefile or GeoJSON data found.";
+    setOverlayStatus(`Import failed: ${message}`);
+    showToast(`Overlay import failed: ${message}`);
+  }
+}
+
+async function importGeoJsonOverlayFile(file) {
+  const parsed = JSON.parse(await file.text());
+  const collections = normalizeOverlayGeoJson(parsed, stripExtension(file.name));
+  let count = 0;
+  for (const collection of collections) {
+    await addCustomOverlay(collection, {
+      name: collection.fileName || stripExtension(file.name),
+      sourceType: "GeoJSON",
+    });
+    count += 1;
+  }
+  return count;
+}
+
+async function importShapefileZip(file) {
+  const parser = await ensureShapefileParser();
+  const geojson = await parser(await file.arrayBuffer());
+  const collections = normalizeOverlayGeoJson(geojson, stripExtension(file.name));
+  let count = 0;
+  for (const collection of collections) {
+    await addCustomOverlay(collection, {
+      name: collection.fileName || stripExtension(file.name),
+      sourceType: "Shapefile ZIP",
+    });
+    count += 1;
+  }
+  return count;
+}
+
+async function importLooseShapefileGroups(files, errors = []) {
+  const groups = new Map();
+  const supported = new Set(["shp", "shx", "dbf", "prj", "cpg"]);
+  for (const file of files) {
+    const ext = fileExtension(file.name);
+    if (!supported.has(ext)) continue;
+    const base = stripExtension(file.webkitRelativePath || file.name);
+    if (!groups.has(base)) groups.set(base, { name: base.split(/[\\/]/).pop() || base });
+    groups.get(base)[ext] = file;
+  }
+  const parser = groups.size ? await ensureShapefileParser() : null;
+  let imported = 0;
+  for (const group of groups.values()) {
+    if (!group.shp) continue;
+    try {
+      const input = { shp: await group.shp.arrayBuffer() };
+      if (group.dbf) input.dbf = await group.dbf.arrayBuffer();
+      if (group.prj) input.prj = await group.prj.text();
+      if (group.cpg) input.cpg = await group.cpg.text();
+      const geojson = await parser(input);
+      const collections = normalizeOverlayGeoJson(geojson, group.name);
+      for (const collection of collections) {
+        await addCustomOverlay(collection, {
+          name: collection.fileName || group.name,
+          sourceType: group.dbf ? "Loose shapefile" : "Loose shapefile (geometry only)",
+        });
+        imported += 1;
+      }
+    } catch (error) {
+      errors.push(`${group.name}: ${friendlyError(error)}`);
+    }
+  }
+  return imported;
+}
+
+async function ensureShapefileParser() {
+  if (typeof window.shp === "function") return window.shp;
+  if (state.overlays.parserPromise) return state.overlays.parserPromise;
+  const urls = [SHP_PARSER_URL, ...SHP_PARSER_FALLBACK_URLS].filter(Boolean);
+  state.overlays.parserPromise = (async () => {
+    let lastError = null;
+    for (const url of urls) {
+      try {
+        await loadScriptOnce(url);
+        if (typeof window.shp === "function") return window.shp;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError || new Error("Could not load shapefile parser.");
+  })();
+  return state.overlays.parserPromise;
+}
+
+function loadScriptOnce(url) {
+  return new Promise((resolve, reject) => {
+    const existing = document.querySelector(`script[src="${url}"]`);
+    if (existing?.dataset.loaded === "true") {
+      resolve();
+      return;
+    }
+    if (existing && existing.dataset.failed !== "true") {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error(`Could not load script ${url}`)), { once: true });
+      return;
+    }
+    const script = document.createElement("script");
+    script.src = url;
+    script.async = true;
+    script.crossOrigin = "anonymous";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      resolve();
+    }, { once: true });
+    script.addEventListener("error", () => {
+      script.dataset.failed = "true";
+      reject(new Error(`Could not load script ${url}`));
+    }, { once: true });
+    document.head.append(script);
+  });
+}
+
+async function addCustomOverlay(collection, options = {}) {
+  const prepared = prepareOverlayFeatureCollection(collection);
+  if (!prepared.geojson.features.length) {
+    throw new Error(`${options.name || "Overlay"} has no valid WGS84 features.`);
+  }
+  const index = state.overlays.items.length;
+  const overlay = {
+    id: createOverlayId(),
+    name: uniqueOverlayName(options.name || prepared.name || "Custom overlay"),
+    sourceType: options.sourceType || "GeoJSON",
+    importedAt: new Date().toISOString(),
+    visible: true,
+    opacity: 0.88,
+    color: OVERLAY_COLORS[index % OVERLAY_COLORS.length],
+    featureCount: prepared.geojson.features.length,
+    geometrySummary: prepared.geometrySummary,
+    bounds: prepared.bounds,
+    propertyKeys: prepared.propertyKeys,
+    geojson: prepared.geojson,
+  };
+  state.overlays.items.push(overlay);
+  renderOverlayList();
+  syncOverlayLayers();
+  await saveOverlayToStore(overlay);
+  if (state.mapReady && state.overlays.items.length === 1) fitOverlayToMap(overlay.id);
+  return overlay;
+}
+
+function normalizeOverlayGeoJson(value, fallbackName = "Overlay") {
+  const output = [];
+  const add = (item, name) => {
+    if (!item) return;
+    if (Array.isArray(item)) {
+      item.forEach((child, index) => add(child, `${name} ${index + 1}`));
+      return;
+    }
+    if (item.type === "FeatureCollection") {
+      output.push({
+        type: "FeatureCollection",
+        fileName: item.fileName || name,
+        features: Array.from(item.features || []),
+      });
+      return;
+    }
+    if (item.type === "Feature") {
+      output.push({ type: "FeatureCollection", fileName: name, features: [item] });
+      return;
+    }
+    if (item.type && (item.coordinates || item.geometries)) {
+      output.push({
+        type: "FeatureCollection",
+        fileName: name,
+        features: [{ type: "Feature", properties: {}, geometry: item }],
+      });
+    }
+  };
+  add(value, fallbackName);
+  if (!output.length) throw new Error("File is not a GeoJSON feature collection or shapefile.");
+  return output;
+}
+
+function prepareOverlayFeatureCollection(collection) {
+  const bounds = createEmptyBounds();
+  const geometryCounts = new Map();
+  const propertyKeys = new Set();
+  const features = [];
+  for (const feature of collection.features || []) {
+    const geometry = feature?.geometry;
+    const featureBounds = createEmptyBounds();
+    if (!geometry || !geometryHasValidLonLat(geometry, featureBounds)) continue;
+    mergeBounds(bounds, featureBounds);
+    geometryCounts.set(geometry.type, (geometryCounts.get(geometry.type) || 0) + 1);
+    const properties = normalizeOverlayProperties(feature.properties);
+    Object.keys(properties).slice(0, 100).forEach((key) => propertyKeys.add(key));
+    features.push({
+      type: "Feature",
+      properties,
+      geometry,
+    });
+  }
+  return {
+    name: collection.fileName || "Overlay",
+    geojson: { type: "FeatureCollection", features },
+    bounds: normalizeBounds(bounds),
+    geometrySummary: formatGeometrySummary(geometryCounts),
+    propertyKeys: Array.from(propertyKeys).slice(0, 50),
+  };
+}
+
+function normalizeOverlayProperties(properties) {
+  const result = {};
+  for (const [key, value] of Object.entries(properties || {})) {
+    if (value === undefined || typeof value === "function") continue;
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+      result[String(key)] = value;
+    } else {
+      result[String(key)] = String(value);
+    }
+  }
+  return result;
+}
+
+function geometryHasValidLonLat(geometry, bounds) {
+  if (geometry.type === "GeometryCollection") {
+    let valid = false;
+    for (const child of geometry.geometries || []) {
+      valid = geometryHasValidLonLat(child, bounds) || valid;
+    }
+    return valid;
+  }
+  let count = 0;
+  let valid = true;
+  walkCoordinates(geometry.coordinates, (lon, lat) => {
+    count += 1;
+    if (!Number.isFinite(lon) || !Number.isFinite(lat) || Math.abs(lon) > 180.00001 || Math.abs(lat) > 90.00001) {
+      valid = false;
+      return;
+    }
+    expandBounds(bounds, lon, lat);
+  });
+  return valid && count > 0;
+}
+
+function walkCoordinates(value, visit) {
+  if (!Array.isArray(value)) return;
+  if (value.length >= 2 && typeof value[0] === "number" && typeof value[1] === "number") {
+    visit(Number(value[0]), Number(value[1]));
+    return;
+  }
+  value.forEach((item) => walkCoordinates(item, visit));
+}
+
+function createEmptyBounds() {
+  return { west: Infinity, south: Infinity, east: -Infinity, north: -Infinity };
+}
+
+function expandBounds(bounds, lon, lat) {
+  bounds.west = Math.min(bounds.west, lon);
+  bounds.south = Math.min(bounds.south, lat);
+  bounds.east = Math.max(bounds.east, lon);
+  bounds.north = Math.max(bounds.north, lat);
+}
+
+function mergeBounds(target, source) {
+  if (![source.west, source.south, source.east, source.north].every(Number.isFinite)) return;
+  expandBounds(target, source.west, source.south);
+  expandBounds(target, source.east, source.north);
+}
+
+function normalizeBounds(bounds) {
+  if (![bounds.west, bounds.south, bounds.east, bounds.north].every(Number.isFinite)) return null;
+  return [bounds.west, bounds.south, bounds.east, bounds.north];
+}
+
+function formatGeometrySummary(counts) {
+  const summary = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([type, count]) => `${count} ${type}`);
+  return summary.join(", ") || "No geometry";
+}
+
+function renderOverlayList() {
+  if (!ui.overlayList) return;
+  const overlays = state.overlays.items;
+  ui.overlayList.innerHTML = overlays.map((overlay) => `
+    <article class="overlay-row" data-overlay-id="${escapeHtml(overlay.id)}">
+      <input type="checkbox" data-overlay-visible="${escapeHtml(overlay.id)}" ${overlay.visible ? "checked" : ""} aria-label="Toggle ${escapeHtml(overlay.name)}">
+      <span class="overlay-label">
+        <b title="${escapeHtml(overlay.name)}">${escapeHtml(overlay.name)}</b>
+        <small>${escapeHtml(overlay.sourceType)} · ${overlay.featureCount.toLocaleString()} features · ${escapeHtml(overlay.geometrySummary)}</small>
+      </span>
+      <input type="color" data-overlay-color="${escapeHtml(overlay.id)}" value="${escapeHtml(overlay.color)}" aria-label="Color ${escapeHtml(overlay.name)}">
+      <div class="overlay-range">
+        <span>${Math.round(Number(overlay.opacity || 0) * 100)}%</span>
+        <input type="range" min="5" max="100" step="5" value="${Math.round(Number(overlay.opacity || 0.88) * 100)}" data-overlay-opacity="${escapeHtml(overlay.id)}" aria-label="Opacity ${escapeHtml(overlay.name)}">
+        <button type="button" data-overlay-fit="${escapeHtml(overlay.id)}">Fit</button>
+        <button type="button" data-overlay-remove="${escapeHtml(overlay.id)}">Del</button>
+      </div>
+    </article>
+  `).join("");
+  if (!overlays.length) ui.overlayList.innerHTML = "";
+  setOverlayStatus(overlays.length
+    ? `${overlays.length} custom overlay${overlays.length === 1 ? "" : "s"}`
+    : state.overlays.storageLoaded ? "No custom overlays" : "Loading saved overlays...");
+}
+
+function setOverlayStatus(message) {
+  if (ui.overlayStatus) ui.overlayStatus.textContent = message;
+}
+
+function updateOverlay(id, patch) {
+  const overlay = overlayById(id);
+  if (!overlay) return;
+  if (patch.visible !== undefined) overlay.visible = Boolean(patch.visible);
+  if (patch.color) overlay.color = normalizeColor(patch.color, overlay.color);
+  if (patch.opacity !== undefined) overlay.opacity = Math.max(0.05, Math.min(1, Number(patch.opacity) || 0.88));
+  applyOverlayLayerStyle(overlay);
+  setOverlayStatus(`${state.overlays.items.length} custom overlay${state.overlays.items.length === 1 ? "" : "s"}`);
+  void saveOverlayToStore(overlay);
+}
+
+async function removeCustomOverlay(id) {
+  const index = state.overlays.items.findIndex((overlay) => overlay.id === id);
+  if (index < 0) return;
+  const [overlay] = state.overlays.items.splice(index, 1);
+  removeOverlayMapLayers(overlay.id);
+  renderOverlayList();
+  await deleteOverlayFromStore(overlay.id);
+  showToast(`Removed ${overlay.name}`);
+}
+
+async function clearCustomOverlays() {
+  if (!state.overlays.items.length) {
+    showToast("No custom overlays to clear");
+    return;
+  }
+  if (!window.confirm("Remove all custom overlays from this browser?")) return;
+  for (const overlay of state.overlays.items) removeOverlayMapLayers(overlay.id);
+  state.overlays.items = [];
+  renderOverlayList();
+  await clearOverlayStore();
+  showToast("Custom overlays cleared");
+}
+
+function syncOverlayLayers() {
+  if (!state.mapReady || !state.map) return;
+  for (const overlay of state.overlays.items) ensureOverlayMapLayers(overlay);
+  orderOverlayLayers();
+}
+
+function ensureOverlayMapLayers(overlay) {
+  const sourceId = overlaySourceId(overlay.id);
+  const existing = state.map.getSource(sourceId);
+  if (existing) existing.setData?.(overlay.geojson);
+  else state.map.addSource(sourceId, { type: "geojson", data: overlay.geojson });
+
+  const fillId = overlayLayerId(overlay.id, "fill");
+  if (!state.map.getLayer(fillId)) {
+    state.map.addLayer({
+      id: fillId,
+      type: "fill",
+      source: sourceId,
+      filter: ["match", ["geometry-type"], ["Polygon", "MultiPolygon"], true, false],
+      paint: {
+        "fill-color": overlay.color,
+        "fill-opacity": overlay.visible ? overlay.opacity * 0.28 : 0,
+      },
+    });
+  }
+
+  const lineId = overlayLayerId(overlay.id, "line");
+  if (!state.map.getLayer(lineId)) {
+    state.map.addLayer({
+      id: lineId,
+      type: "line",
+      source: sourceId,
+      filter: ["match", ["geometry-type"], ["LineString", "MultiLineString", "Polygon", "MultiPolygon"], true, false],
+      paint: {
+        "line-color": overlay.color,
+        "line-opacity": overlay.visible ? overlay.opacity : 0,
+        "line-width": ["interpolate", ["linear"], ["zoom"], 2, 1, 8, 2, 13, 4],
+      },
+    });
+  }
+
+  const circleId = overlayLayerId(overlay.id, "circle");
+  if (!state.map.getLayer(circleId)) {
+    state.map.addLayer({
+      id: circleId,
+      type: "circle",
+      source: sourceId,
+      filter: ["match", ["geometry-type"], ["Point", "MultiPoint"], true, false],
+      paint: {
+        "circle-color": overlay.color,
+        "circle-opacity": overlay.visible ? overlay.opacity : 0,
+        "circle-stroke-color": "#000000",
+        "circle-stroke-width": 1,
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 2, 3, 9, 5, 13, 8],
+      },
+    });
+  }
+  applyOverlayLayerStyle(overlay);
+}
+
+function applyOverlayLayerStyle(overlay) {
+  if (!state.map) return;
+  const visible = overlay.visible ? "visible" : "none";
+  for (const type of OVERLAY_LAYER_TYPES) {
+    const id = overlayLayerId(overlay.id, type);
+    if (!state.map.getLayer(id)) continue;
+    state.map.setLayoutProperty(id, "visibility", visible);
+  }
+  const fillOpacity = overlay.visible ? overlay.opacity * 0.28 : 0;
+  const lineOpacity = overlay.visible ? overlay.opacity : 0;
+  const circleOpacity = overlay.visible ? overlay.opacity : 0;
+  setPaintIfLayer(overlayLayerId(overlay.id, "fill"), "fill-color", overlay.color);
+  setPaintIfLayer(overlayLayerId(overlay.id, "fill"), "fill-opacity", fillOpacity);
+  setPaintIfLayer(overlayLayerId(overlay.id, "line"), "line-color", overlay.color);
+  setPaintIfLayer(overlayLayerId(overlay.id, "line"), "line-opacity", lineOpacity);
+  setPaintIfLayer(overlayLayerId(overlay.id, "circle"), "circle-color", overlay.color);
+  setPaintIfLayer(overlayLayerId(overlay.id, "circle"), "circle-opacity", circleOpacity);
+}
+
+function setPaintIfLayer(layerId, property, value) {
+  try {
+    if (state.map?.getLayer?.(layerId)) state.map.setPaintProperty(layerId, property, value);
+  } catch (error) {
+    console.debug("Overlay style update skipped", layerId, property, error);
+  }
+}
+
+function orderOverlayLayers() {
+  if (!state.map) return;
+  for (const overlay of state.overlays.items) {
+    for (const type of OVERLAY_LAYER_TYPES) {
+      const id = overlayLayerId(overlay.id, type);
+      try {
+        if (state.map.getLayer(id)) state.map.moveLayer(id);
+      } catch {
+        // Layer order is best-effort during map style churn.
+      }
+    }
+  }
+}
+
+function removeOverlayMapLayers(id) {
+  if (!state.map) return;
+  for (const type of OVERLAY_LAYER_TYPES) {
+    const layerId = overlayLayerId(id, type);
+    if (state.map.getLayer(layerId)) state.map.removeLayer(layerId);
+  }
+  const sourceId = overlaySourceId(id);
+  if (state.map.getSource(sourceId)) state.map.removeSource(sourceId);
+}
+
+function handleOverlayMapClick(event) {
+  if (!state.map || !state.overlays.items.length) return;
+  const layers = state.overlays.items
+    .filter((overlay) => overlay.visible)
+    .flatMap((overlay) => OVERLAY_LAYER_TYPES.map((type) => overlayLayerId(overlay.id, type)))
+    .filter((layerId) => state.map.getLayer(layerId));
+  if (!layers.length) return;
+  let features = [];
+  try {
+    features = state.map.queryRenderedFeatures(event.point, { layers });
+  } catch {
+    return;
+  }
+  const feature = features[0];
+  if (!feature) return;
+  const overlay = state.overlays.items.find((item) => feature.layer?.id?.startsWith(`${overlaySourceId(item.id)}-`));
+  if (!overlay) return;
+  state.overlays.popup?.remove?.();
+  state.overlays.popup = new window.maplibregl.Popup({ closeButton: true, closeOnClick: true, maxWidth: "320px" })
+    .setLngLat(event.lngLat)
+    .setHTML(overlayFeaturePopupHtml(overlay, feature))
+    .addTo(state.map);
+}
+
+function overlayFeaturePopupHtml(overlay, feature) {
+  const properties = Object.entries(feature.properties || {})
+    .filter(([, value]) => value !== null && value !== undefined && value !== "")
+    .slice(0, 12);
+  const rows = properties.length
+    ? properties.map(([key, value]) => `<tr><th>${escapeHtml(key)}</th><td>${escapeHtml(value)}</td></tr>`).join("")
+    : `<tr><td colspan="2">No attributes</td></tr>`;
+  return `
+    <div class="overlay-popup">
+      <strong>${escapeHtml(overlay.name)}</strong>
+      <table>${rows}</table>
+    </div>
+  `;
+}
+
+function fitOverlayToMap(id) {
+  const overlay = overlayById(id);
+  if (!overlay?.bounds) return;
+  if (!state.mapReady || !state.map) {
+    showToast("Interactive map is not ready yet");
+    return;
+  }
+  const bounds = expandPointBounds(overlay.bounds);
+  state.map.fitBounds([[bounds[0], bounds[1]], [bounds[2], bounds[3]]], {
+    padding: 48,
+    duration: 420,
+    maxZoom: 12,
+  });
+}
+
+function expandPointBounds(bounds) {
+  const [west, south, east, north] = bounds;
+  if (west !== east || south !== north) return bounds;
+  return [west - 0.08, south - 0.08, east + 0.08, north + 0.08];
+}
+
+async function restoreSavedOverlays() {
+  try {
+    const saved = await readAllOverlaysFromStore();
+    state.overlays.items = saved
+      .filter((overlay) => overlay?.id && overlay?.geojson?.type === "FeatureCollection")
+      .map((overlay, index) => ({
+        ...overlay,
+        visible: overlay.visible !== false,
+        opacity: Math.max(0.05, Math.min(1, Number(overlay.opacity) || 0.88)),
+        color: normalizeColor(overlay.color, OVERLAY_COLORS[index % OVERLAY_COLORS.length]),
+      }));
+    state.overlays.storageLoaded = true;
+    renderOverlayList();
+    syncOverlayLayers();
+  } catch (error) {
+    state.overlays.storageError = error;
+    state.overlays.storageLoaded = true;
+    setOverlayStatus("Saved overlays unavailable");
+    console.warn("Could not restore custom overlays.", error);
+  }
+}
+
+async function saveOverlayToStore(overlay) {
+  try {
+    await overlayStoreRequest("readwrite", (store) => store.put(overlay));
+  } catch (error) {
+    state.overlays.storageError = error;
+    setOverlayStatus("Overlay imported; local save failed");
+    console.warn("Could not save custom overlay.", error);
+  }
+}
+
+async function deleteOverlayFromStore(id) {
+  try {
+    await overlayStoreRequest("readwrite", (store) => store.delete(id));
+  } catch (error) {
+    console.warn("Could not delete saved overlay.", error);
+  }
+}
+
+async function clearOverlayStore() {
+  try {
+    await overlayStoreRequest("readwrite", (store) => store.clear());
+  } catch (error) {
+    console.warn("Could not clear saved overlays.", error);
+  }
+}
+
+async function readAllOverlaysFromStore() {
+  return overlayStoreRequest("readonly", (store) => store.getAll());
+}
+
+function overlayStoreRequest(mode, action) {
+  return new Promise((resolve, reject) => {
+    if (!window.indexedDB) {
+      reject(new Error("IndexedDB is not available."));
+      return;
+    }
+    const open = indexedDB.open(OVERLAY_DB_NAME, 1);
+    open.onupgradeneeded = () => {
+      const db = open.result;
+      if (!db.objectStoreNames.contains(OVERLAY_DB_STORE)) db.createObjectStore(OVERLAY_DB_STORE, { keyPath: "id" });
+    };
+    open.onerror = () => reject(open.error || new Error("Could not open overlay storage."));
+    open.onsuccess = () => {
+      const db = open.result;
+      const transaction = db.transaction(OVERLAY_DB_STORE, mode);
+      const store = transaction.objectStore(OVERLAY_DB_STORE);
+      const request = action(store);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error("Overlay storage request failed."));
+      transaction.oncomplete = () => db.close();
+      transaction.onerror = () => {
+        db.close();
+        reject(transaction.error || new Error("Overlay storage transaction failed."));
+      };
+    };
+  });
+}
+
+function overlayById(id) {
+  return state.overlays.items.find((overlay) => overlay.id === id);
+}
+
+function overlaySourceId(id) {
+  return `meowdar-overlay-${id}`;
+}
+
+function overlayLayerId(id, type) {
+  return `${overlaySourceId(id)}-${type}`;
+}
+
+function createOverlayId() {
+  return `ov-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function uniqueOverlayName(name) {
+  const clean = String(name || "Custom overlay").trim().slice(0, 80) || "Custom overlay";
+  const existing = new Set(state.overlays.items.map((overlay) => overlay.name));
+  if (!existing.has(clean)) return clean;
+  let index = 2;
+  while (existing.has(`${clean} ${index}`)) index += 1;
+  return `${clean} ${index}`;
+}
+
+function normalizeColor(value, fallback = "#00ffff") {
+  const text = String(value || "").trim();
+  return /^#[0-9a-f]{6}$/i.test(text) ? text : fallback;
+}
+
+function fileExtension(name) {
+  const match = String(name || "").toLowerCase().match(/\.([a-z0-9]+)$/);
+  return match ? match[1] : "";
+}
+
+function stripExtension(name) {
+  return String(name || "overlay").replace(/\.[^.\\/]+$/i, "");
 }
 
 function readPreferences() {
@@ -3419,6 +4203,7 @@ function mountRadarCanvas(layer) {
   state.map.addLayer(layerSpec, beforeId);
   state.radarSourceSignature = signature;
   pulseCanvasSource(state.map.getSource(MAP.sourceId));
+  syncOverlayLayers();
 }
 
 function removeRadarMapLayer() {
@@ -3720,6 +4505,7 @@ function ensurePolarRadarLayer() {
     const beforeId = state.map.getStyle()?.layers?.find((candidate) => candidate.type === "symbol")?.id;
     try {
       state.map.addLayer(state.polarLayer, beforeId);
+      syncOverlayLayers();
     } catch (error) {
       state.polarLayerFailed = true;
       console.warn("Could not add BowEcho polar radar layer.", error);
