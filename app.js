@@ -116,6 +116,7 @@ const QUALITY_LABELS = {
 
 const STATIC_PREVIEW = Boolean(window.__MEOWDAR_STATIC_PREVIEW__);
 const URL_PARAMS = new URLSearchParams(window.location.search);
+const REQUESTED_SITE = normalizeRadarSiteCode(URL_PARAMS.get("site"));
 const LOCAL_LOOP_TEST_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const LOOP_TEST_MODE = URL_PARAMS.get("loop-test") === "1" && LOCAL_LOOP_TEST_HOSTS.has(window.location.hostname);
 const LOCAL_LOOP_COUNTS = LOOP_TEST_MODE ? [1, 3, 6, 12] : [1, 3];
@@ -139,6 +140,8 @@ const PROFILES = {
     note: "512 px · lowest elevations",
   },
 };
+
+const URL_LINK = parseUrlLink(URL_PARAMS);
 
 const DEFAULTS = {
   site: chooseDefaultRadarSite("KMUX"),
@@ -230,6 +233,8 @@ const state = {
   loopSpeedMs: DEFAULTS.loopSpeedMs,
   endDwellMs: DEFAULTS.endDwellMs,
   siteCatalogHydrated: false,
+  requestedSite: REQUESTED_SITE,
+  archiveLink: URL_LINK.archive,
 };
 
 const $ = (id) => document.getElementById(id);
@@ -308,11 +313,11 @@ initialize();
 function initialize() {
   configureLoopOptions();
   const saved = readPreferences();
-  state.site = resolveSitePreference(URL_PARAMS.get("site")) || resolveSitePreference(saved.site) || DEFAULTS.site;
-  state.product = saved.product && PRODUCTS[saved.product] ? saved.product : DEFAULTS.product;
-  state.mode = saved.mode === "archive" ? "archive" : "live";
-  state.profile = saved.profile && PROFILES[saved.profile] ? saved.profile : DEFAULTS.profile;
-  state.loopCount = normalizeLoopCount(saved.loopCount ?? DEFAULTS.loopCount);
+  state.site = resolveSitePreference(REQUESTED_SITE) || resolveSitePreference(saved.site) || DEFAULTS.site;
+  state.product = URL_LINK.product || (saved.product && PRODUCTS[saved.product] ? saved.product : DEFAULTS.product);
+  state.mode = URL_LINK.mode || (saved.mode === "archive" ? "archive" : "live");
+  state.profile = URL_LINK.profile || (saved.profile && PROFILES[saved.profile] ? saved.profile : DEFAULTS.profile);
+  state.loopCount = normalizeLoopCount(URL_LINK.frames ?? saved.loopCount ?? DEFAULTS.loopCount);
   state.quality = ["auto", "strict", "all"].includes(saved.quality) ? saved.quality : DEFAULTS.quality;
   state.followLatestLow = saved.followLatestLow !== false;
   state.lowTiltMax = [0.9, 1.5, 2.5].includes(Number(saved.lowTiltMax)) ? Number(saved.lowTiltMax) : DEFAULTS.lowTiltMax;
@@ -335,6 +340,7 @@ function initialize() {
 
   populateSiteSelect();
   setArchiveDefaults();
+  applyArchiveLinkToControls();
   bindEvents();
   createSitePills();
   syncControls();
@@ -347,6 +353,7 @@ function initialize() {
     ui.conditionMap.textContent = "Map preview";
   }
   if (!STATIC_PREVIEW) detectEngine();
+  if (!STATIC_PREVIEW && URL_LINK.autoload) setTimeout(() => loadRadar(), 0);
   if (STATIC_PREVIEW) {
     const previewParams = new URLSearchParams(window.location.search);
     if (previewParams.get("glm") === "1") setTimeout(() => state.glm?.setEnabled(true), 0);
@@ -683,8 +690,10 @@ function hydrateRadarSites(module) {
   }
   if (Object.keys(catalog).length < 20) return false;
   SITES = restrictRadarSiteCatalog(catalog);
+  const requestedSite = resolveSitePreference(state.requestedSite);
   const savedSite = resolveSitePreference(readPreferences().site);
-  if (savedSite) state.site = savedSite;
+  if (requestedSite) state.site = requestedSite;
+  else if (savedSite) state.site = savedSite;
   else if (!SITES[state.site]) state.site = chooseDefaultRadarSite(DEFAULTS.site);
   state.siteCatalogHydrated = true;
   populateSiteSelect();
@@ -1125,6 +1134,76 @@ function formatDateInput(date) {
   return `${year}-${month}-${day}`;
 }
 
+function truthyUrlParam(value) {
+  return /^(1|true|yes|on)$/i.test(String(value || "").trim());
+}
+
+function parseArchiveUrlTime(params) {
+  const isoValue = params.get("time") || params.get("archive") || params.get("at");
+  if (isoValue) {
+    const normalized = String(isoValue).trim();
+    const date = new Date(normalized);
+    if (Number.isFinite(date.getTime())) {
+      const iso = date.toISOString();
+      return {
+        iso,
+        date: iso.slice(0, 10),
+        time: iso.slice(11, 16),
+      };
+    }
+  }
+
+  const dateValue = params.get("date") || params.get("archiveDate");
+  const timeValue = params.get("utc") || params.get("archiveTime");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(dateValue || "")) && /^\d{2}:\d{2}(:\d{2})?$/.test(String(timeValue || ""))) {
+    const date = new Date(`${dateValue}T${timeValue}${String(timeValue).length === 5 ? ":00" : ""}Z`);
+    if (Number.isFinite(date.getTime())) {
+      const iso = date.toISOString();
+      return {
+        iso,
+        date: iso.slice(0, 10),
+        time: iso.slice(11, 16),
+      };
+    }
+  }
+
+  return null;
+}
+
+function parseUrlLink(params) {
+  const archive = parseArchiveUrlTime(params);
+  const modeParam = String(params.get("mode") || "").toLowerCase();
+  const productParam = String(params.get("product") || "").toUpperCase();
+  const profileParam = String(params.get("profile") || "").toLowerCase();
+  const rawFramesParam = params.get("frames") || params.get("frameCount") || params.get("loop");
+  const framesParam = rawFramesParam == null ? NaN : Number(rawFramesParam);
+  return {
+    mode: modeParam === "archive" || archive ? "archive" : modeParam === "live" ? "live" : "",
+    product: PRODUCTS[productParam] ? productParam : "",
+    profile: PROFILES[profileParam] ? profileParam : "",
+    frames: Number.isFinite(framesParam) ? framesParam : null,
+    autoload: truthyUrlParam(params.get("autoload")) || truthyUrlParam(params.get("load")),
+    archive: archive
+      ? {
+        ...archive,
+        center: truthyUrlParam(params.get("center")) || /^(middle|center|peak|event)$/i.test(String(params.get("target") || "")),
+      }
+      : null,
+  };
+}
+
+function applyArchiveLinkToControls() {
+  if (!state.archiveLink) return;
+  ui.archiveDate.value = state.archiveLink.date;
+  ui.archiveTime.value = state.archiveLink.time;
+}
+
+function currentArchiveTargetTime(date, time) {
+  const link = state.archiveLink;
+  if (link?.iso && link.date === date && link.time === time) return link.iso;
+  return new Date(`${date}T${time}:00Z`).toISOString();
+}
+
 function readPreferences() {
   try {
     return JSON.parse(localStorage.getItem("meowdar-preferences-v2") || "{}");
@@ -1458,7 +1537,7 @@ async function loadArchiveRadar(generation) {
   const time = ui.archiveTime.value || "12:00";
   if (!date) throw new Error("Choose an archive date.");
 
-  const targetTime = new Date(`${date}T${time}:00Z`).toISOString();
+  const targetTime = currentArchiveTargetTime(date, time);
   setLoading(true, `Finding the nearest ${state.site} archive scan`, `Searching ${date} ${time} UTC…`);
   cleanupRadarSession({ preserveGeneration: true });
 
@@ -1489,6 +1568,44 @@ async function loadArchiveRadar(generation) {
   if (state.loopCount > 1) scheduleArchiveBackgroundLoop(generation, date, targetTime);
 }
 
+async function loadArchiveLoopAroundTarget(site, date, options) {
+  const frameCount = normalizeLoopCount(options.frameCount);
+  const centerTarget = Boolean(options.centerTarget && frameCount > 1 && options.targetTime);
+  if (!centerTarget || typeof state.toolbox?.archiveFramesForDate !== "function" || typeof state.toolbox?.archiveFrameWindow !== "function") {
+    return state.toolbox.loadArchiveLoop(site, date, options);
+  }
+
+  const archiveFrames = await state.toolbox.archiveFramesForDate(site, date);
+  const targetWindow = state.toolbox.archiveFrameWindow(archiveFrames, {
+    site,
+    date,
+    targetTime: options.targetTime,
+    frameCount: 1,
+  });
+  const targetGlobalIndex = Number(targetWindow?.endIndex);
+  if (!Number.isInteger(targetGlobalIndex) || targetGlobalIndex < 0) {
+    return state.toolbox.loadArchiveLoop(site, date, options);
+  }
+
+  const selectedIndex = Math.min(archiveFrames.length - 1, targetGlobalIndex + Math.floor(frameCount / 2));
+  const loop = await state.toolbox.loadArchiveLoop(site, date, {
+    ...options,
+    frameCount,
+    selectedIndex,
+  });
+  const localTargetIndex = targetGlobalIndex - Number(loop.archiveWindow?.startIndex ?? 0);
+  if (Number.isInteger(localTargetIndex)) {
+    loop.meowdarTargetIndex = Math.max(0, Math.min(Number(loop.length || loop.frames?.length || 1) - 1, localTargetIndex));
+  }
+  return loop;
+}
+
+function preferredArchiveFrameIndex(loop) {
+  const count = Number(loop?.length || loop?.renderedFrames?.length || loop?.frames?.length || archiveFrameCount());
+  if (Number.isInteger(loop?.meowdarTargetIndex)) return Math.max(0, Math.min(count - 1, loop.meowdarTargetIndex));
+  return Math.max(0, count - 1);
+}
+
 function scheduleArchiveBackgroundLoop(generation, date, targetTime) {
   const backgroundId = ++state.backgroundGeneration;
   const profile = PROFILES[state.profile];
@@ -1497,9 +1614,10 @@ function scheduleArchiveBackgroundLoop(generation, date, targetTime) {
     state.loopBuilding = true;
     showBackgroundProgress(`Building ${state.loopCount}-scan archive loop…`);
     try {
-      const expanded = await state.toolbox.loadArchiveLoop(state.site, date, {
+      const expanded = await loadArchiveLoopAroundTarget(state.site, date, {
         targetTime,
         frameCount: state.loopCount,
+        centerTarget: state.archiveLink?.center,
         product: state.product,
         width: profile.renderSize,
         height: profile.renderSize,
@@ -1512,7 +1630,7 @@ function scheduleArchiveBackgroundLoop(generation, date, targetTime) {
       if (generation !== state.loadGeneration || backgroundId !== state.backgroundGeneration) return;
       if (!Number(expanded?.length || expanded?.frames?.length || 0)) throw new Error("No additional archive scans were returned.");
       state.loop = expanded;
-      state.frameIndex = archiveFrameCount() - 1;
+      state.frameIndex = preferredArchiveFrameIndex(expanded);
       await settleArchiveFrame();
       await warmPlaybackFrameCache();
       showToast(`${archiveFrameCount()}-scan archive loop ready`);

@@ -15,9 +15,10 @@ API key. Optional GOES GLM lightning is also decoded client-side.
 - **High-resolution full default.** Full mode renders to a 3072 × 3072
   backing canvas with native gate/bin sampling and nearest-neighbor map
   resampling. Low Data is an explicit 512 × 512 mode.
-- **Large progressive loops.** Choose 1, 3, 6, 12, 24, 36, 48, 72, or 96 frames,
-  four playback speeds, and configurable last-frame dwell. The newest frame
-  appears first; older frames fill in behind it.
+- **Progressive loops.** The public GitHub Pages build defaults to practical
+  3-frame loops with one-frame fallback. Local loop-test builds can expose
+  larger experimental counts. The newest frame appears first; older frames fill
+  in behind it.
 - **Per-frame low-sweep loops.** Every volume in a loop is independently checked
   for its best completed low sweep. Meowdar does not assume that one cut index
   is valid across an entire loop.
@@ -32,6 +33,8 @@ API key. Optional GOES GLM lightning is also decoded client-side.
 - **Full UTC archive workflow.** Select a station, date, and UTC time. The
   nearest frame is displayed first and the requested loop backfills around it.
   Archive coverage depends on the upstream Level II providers and station era.
+- **Static archive deep links.** External static datasets can open Meowdar
+  directly into an archive target with a centered 3-frame radar loop.
 - **Palette laboratory.** Import BowEcho/GR-style `.pal` or `.txt` files, or
   JSON tables; edit stops, color, opacity, and interpolation; export locally;
   and persist user palettes in browser storage.
@@ -171,11 +174,11 @@ assuming the community tile servers will absorb unlimited use.
 
 ## Performance and large loops
 
-The 3-frame Full loop is the practical default. A 96-frame native loop is
-available because professionals sometimes need it, but 96 raw 3072 × 3072 RGBA
-frames alone represent about 3.38 GiB before decoded volumes, JavaScript object
-overhead, browser/GPU copies, and map textures. Meowdar does not quietly reduce
-resolution to make that number disappear.
+The 3-frame Full loop is the practical public default. Larger native loops are
+useful for local analysis but can become browser-hostile quickly: 12 raw
+3072 x 3072 RGBA frames alone represent about 432 MiB before decoded volumes,
+JavaScript object overhead, browser/GPU copies, and map textures. Meowdar does
+not quietly reduce resolution to make that number disappear.
 
 Large loops therefore:
 
@@ -186,8 +189,26 @@ Large loops therefore:
 - remain operator-selected rather than the default.
 
 Low Data keeps the same archive, QC, product, palette, and low-sweep controls at
-512 × 512. A 96-frame Low Data pixel ceiling is about 96 MiB. See
-`RESOURCE_BUDGET.md` for the full table.
+512 x 512. See `RESOURCE_BUDGET.md` for the full table.
+
+## Archive Links
+
+Meowdar can be launched from static event/catalog pages with query parameters:
+
+```text
+https://fahrenheitresearch.github.io/meowdar-95/?site=KPAH&mode=archive&time=2021-12-11T02%3A54%3A00Z&frames=3&center=1&autoload=1&polar=1
+```
+
+Supported link parameters:
+
+- `site`: four-character radar ID.
+- `mode=archive`: select archive mode.
+- `time`: UTC ISO timestamp for the event or peak.
+- `frames=3`: public-safe loop size.
+- `center=1`: put the target scan in the middle frame when surrounding scans
+  exist.
+- `autoload=1`: load radar automatically on page open.
+- `product`: optional `REF`, `DVEL`, or `CC`; defaults to reflectivity.
 
 ## GLM scope
 
