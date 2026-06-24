@@ -1,0 +1,16 @@
+{
+  "name": "bowecho-client-wasm",
+  "type": "module",
+  "version": "0.1.0",
+  "license": "MIT OR Apache-2.0",
+  "files": [
+    "bowecho_client_wasm_bg.wasm",
+    "bowecho_client_wasm.js",
+    "bowecho_client_wasm.d.ts"
+  ],
+  "main": "bowecho_client_wasm.js",
+  "types": "bowecho_client_wasm.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
