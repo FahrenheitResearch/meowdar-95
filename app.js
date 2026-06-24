@@ -119,7 +119,7 @@ const PROFILES = {
     label: "Full resolution",
     renderSize: 3072,
     maxTilt: Infinity,
-    concurrency: 2,
+    concurrency: 1,
     smoothing: "native",
     note: "3072 px texture · nearest",
   },
@@ -1120,11 +1120,10 @@ async function loadRadar() {
 
 async function loadLiveRadar(generation) {
   const profile = PROFILES[state.profile];
-  const requestedFrames = Math.max(1, Math.min(state.loopCount, 6));
-  setLoading(true, `Loading the newest ${state.site} scan`, `Fetching ${requestedFrames} recent Level II volume${requestedFrames === 1 ? "" : "s"}…`);
+  setLoading(true, `Loading the newest ${state.site} scan`, "Fetching one Level II volume...");
   cleanupRadarSession({ preserveGeneration: true });
 
-  const options = radarOptions({ mode: "live", frameCount: requestedFrames });
+  const options = radarOptions({ mode: "live", frameCount: 1 });
   state.session = createSession(options);
 
   if (typeof state.session.subscribe === "function") {
@@ -1135,7 +1134,7 @@ async function loadLiveRadar(generation) {
     });
   }
 
-  await state.session.load({ ...options, concurrency: loopConcurrency() });
+  await state.session.load({ ...options, frameCount: 1, concurrency: 1 });
   if (generation !== state.loadGeneration) return;
 
   state.snapshot = state.session.snapshot?.() || state.snapshot;
@@ -1144,13 +1143,13 @@ async function loadLiveRadar(generation) {
   state.loop = null;
   await moveLiveToLatest();
   syncSessionSnapshot(state.snapshot);
-  const rendered = await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
+  const rendered = await settleLiveSnapshot();
   if (!rendered) showToast("Waiting for the newest complete low sweep");
   setLivePresentation("Live", "NOAA Level II");
   setLoading(false);
   scheduleLivePoll();
 
-  if (state.loopCount > 1 && liveFrameCount() < state.loopCount) scheduleLiveBackgroundLoop(generation, profile);
+  if (state.loopCount > 1) scheduleLiveBackgroundLoop(generation, profile);
 }
 
 function createSession(options) {
@@ -1183,12 +1182,11 @@ function scheduleLiveBackgroundLoop(generation, profile) {
     showBackgroundProgress(`Adding ${state.loopCount - 1} older scans…`);
     try {
       const options = radarOptions({ mode: "live", frameCount: state.loopCount });
-      await state.session.load({ ...options, concurrency: loopConcurrency() });
+      await state.session.load({ ...options, concurrency: 1 });
       if (generation !== state.loadGeneration || backgroundId !== state.backgroundGeneration) return;
       state.snapshot = state.session.snapshot?.() || state.snapshot;
       await moveLiveToLatest();
-      await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
-      schedulePolarLoopPreload();
+      await settleLiveSnapshot();
       showToast(`${liveFrameCount()}-scan loop ready`);
     } catch (error) {
       console.warn("Background loop expansion failed; keeping the first scan.", error);
@@ -1256,14 +1254,13 @@ function scheduleArchiveBackgroundLoop(generation, date, targetTime) {
         smoothing: profile.smoothing,
         maxTilt: activeTiltCeiling(),
         ...state.paletteManager?.renderOverrides(state.product),
-        concurrency: loopConcurrency(),
+        concurrency: 1,
       });
       if (generation !== state.loadGeneration || backgroundId !== state.backgroundGeneration) return;
       if (!Number(expanded?.length || expanded?.frames?.length || 0)) throw new Error("No additional archive scans were returned.");
       state.loop = expanded;
       state.frameIndex = archiveFrameCount() - 1;
       await settleArchiveFrame();
-      schedulePolarLoopPreload();
       showToast(`${archiveFrameCount()}-scan archive loop ready`);
     } catch (error) {
       console.warn("Archive loop expansion failed; keeping the first scan.", error);
@@ -2108,6 +2105,9 @@ function schedulePolarRadarLayer(frame) {
 }
 
 function schedulePolarLoopPreload() {
+  // Native PPI frames are rendered on demand; preloading several 3072 px polar
+  // products can lock up browsers on GitHub Pages.
+  return;
   if (!POLAR_RENDER_EXPERIMENT || state.profile !== "full" || typeof state.toolbox?.renderNativePpi !== "function") return;
   const frames = state.source === "live"
     ? (state.session?.loop?.renderedFrames || state.session?.loop?.frames)
@@ -2854,10 +2854,10 @@ async function refreshRadar() {
     if (state.source === "live" && state.session?.poll) {
       setLoading(true, "Checking for a new scan", "Only newly available public radar data will be requested…");
       invalidateCurrentDiagnostics();
-      await state.session.poll(radarOptions({ mode: "live", frameCount: state.loopCount }));
+      await state.session.poll(radarOptions({ mode: "live", frameCount: 1 }));
       state.snapshot = state.session.snapshot?.() || state.snapshot;
       await moveLiveToLatest();
-      await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
+      await settleLiveSnapshot();
       showToast(frameReadyForRender(state.session.currentFrame?.()) ? "Radar is up to date" : "Waiting for the newest complete low tilt");
     } else if (state.source === "archive") {
       await loadRadar();
@@ -2883,28 +2883,21 @@ function scheduleLivePoll() {
   state.livePollTimer = setTimeout(async () => {
     const session = state.session;
     const generation = state.loadGeneration;
-    if (!document.hidden && state.source === "live" && session?.poll && !state.loopBuilding) {
+    if (!document.hidden && state.source === "live" && session?.poll && !state.isPlaying && !state.loopBuilding) {
       try {
         const wasFollowingLatest = !liveFrameHoldActive() && state.frameIndex >= currentFrameCount() - 1;
         const heldKey = state.liveFrameHoldKey;
         const heldIndex = state.frameIndex;
         invalidateCurrentDiagnostics(session.currentFrame?.());
-        await session.poll(radarOptions({ mode: "live", frameCount: state.loopCount }));
+        await session.poll(radarOptions({ mode: "live", frameCount: 1 }));
         if (generation !== state.loadGeneration || session !== state.session || state.source !== "live") return;
         state.snapshot = session.snapshot?.() || state.snapshot;
         if (heldKey && liveFrameHoldActive()) await restoreLiveHeldFrame(heldKey, heldIndex);
         if (wasFollowingLatest) await moveLiveToLatest();
         else syncSessionSnapshot(state.snapshot);
         if (generation !== state.loadGeneration || session !== state.session || state.source !== "live") return;
-        if (!await settleLiveSnapshot()) {
-          await settleBestLiveFrame({
-            startIndex: wasFollowingLatest ? liveFrameCount() - 1 : state.frameIndex,
-            allowNewerFallback: !wasFollowingLatest,
-          });
-        }
-        if (state.loopCount > 1 && liveFrameCount() < state.loopCount) {
-          scheduleLiveBackgroundLoop(generation, PROFILES[state.profile]);
-        }
+        await settleLiveSnapshot();
+        if (state.loopCount > 1) scheduleLiveBackgroundLoop(generation, PROFILES[state.profile]);
       } catch (error) {
         if (generation === state.loadGeneration && session === state.session) console.warn("Background radar refresh failed", error);
       }
