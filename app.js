@@ -1456,14 +1456,21 @@ async function selectCatalogDay(day) {
   renderCatalogDetail(record, { loading: true });
   try {
     if (!state.engineReady) await detectEngine();
+    let reportError = null;
     const [eventDay, tornadoTargets] = await Promise.all([
-      fetchCatalogReports(day),
+      fetchCatalogReports(day).catch((error) => {
+        reportError = error;
+        console.warn(`SPC report targets unavailable for ${day}`, error);
+        return null;
+      }),
       fetchCatalogTornadoTargets(day),
     ]);
+    if (!eventDay && !tornadoTargets) throw reportError || new Error("No catalog target data is available for this day.");
     const targets = buildCatalogTargets(record, eventDay, tornadoTargets).slice(0, CATALOG_TARGET_LIMIT);
     state.catalog.currentTargets = targets;
-    renderCatalogDetail(record, { eventDay, tornadoTargets, targets });
-    ui.catalogStatus.textContent = `${day}: ${targets.length} radar target${targets.length === 1 ? "" : "s"} generated`;
+    renderCatalogDetail(record, { eventDay, tornadoTargets, targets, reportError });
+    const partial = reportError ? " (SPC reports unavailable)" : "";
+    ui.catalogStatus.textContent = `${day}: ${targets.length} radar target${targets.length === 1 ? "" : "s"} generated${partial}`;
   } catch (error) {
     renderCatalogDetail(record, { error });
     ui.catalogStatus.textContent = `${day}: target generation failed`;
@@ -1764,7 +1771,7 @@ function catalogTargetKindOrder(preferredKind, targets) {
   return order.filter((kind, index) => available.has(kind) && order.indexOf(kind) === index);
 }
 
-function renderCatalogDetail(record, { loading = false, eventDay = null, tornadoTargets = null, targets = [], error = null } = {}) {
+function renderCatalogDetail(record, { loading = false, eventDay = null, tornadoTargets = null, targets = [], error = null, reportError = null } = {}) {
   const packs = [
     record.risk,
     `${record.ofb || "none"} OFB/MCS`,
@@ -1794,6 +1801,7 @@ function renderCatalogDetail(record, { loading = false, eventDay = null, tornado
     ${renderCatalogEvidence(record)}
     ${loading ? `<p class="catalog-empty">Generating hazard-weighted radar targets...</p>` : ""}
     ${error ? `<p class="catalog-empty">Could not generate targets: ${escapeHtml(friendlyError(error))}</p>` : ""}
+    ${reportError ? `<p class="catalog-empty">SPC wind/hail report targets are unavailable from this browser right now: ${escapeHtml(friendlyError(reportError))}. Showing hosted tornado archive targets.</p>` : ""}
     ${tornadoSummary ? `<p class="catalog-muted">Tornado targets: ${escapeHtml(tornadoSummary)}.</p>` : ""}
     ${eventDay ? `<p class="catalog-muted">SPC reports: ${reportCounts.wind || 0} wind, ${reportCounts.hail || 0} hail, ${reportCounts.tornado || 0} tornado. Showing ${targets.length} hazard-weighted radar targets${targetMix ? ` (${escapeHtml(targetMix)})` : ""}.</p>` : ""}
     ${targets.length ? `<div class="catalog-target-list">${targets.map(renderCatalogTarget).join("")}</div>` : (!loading && !error ? `<p class="catalog-empty">No report-based targets found for this day.</p>` : "")}
