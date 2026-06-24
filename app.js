@@ -114,6 +114,13 @@ const QUALITY_LABELS = {
   all: "Raw product cuts",
 };
 
+const STATIC_PREVIEW = Boolean(window.__MEOWDAR_STATIC_PREVIEW__);
+const URL_PARAMS = new URLSearchParams(window.location.search);
+const LOCAL_LOOP_TEST_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
+const LOOP_TEST_MODE = URL_PARAMS.get("loop-test") === "1" && LOCAL_LOOP_TEST_HOSTS.has(window.location.hostname);
+const LOCAL_LOOP_COUNTS = LOOP_TEST_MODE ? [1, 3, 6, 12] : [1, 3];
+const DEFAULT_LOOP_COUNT = 3;
+
 const PROFILES = {
   full: {
     label: "Full resolution",
@@ -138,7 +145,7 @@ const DEFAULTS = {
   mode: "live",
   product: "REF",
   profile: "full",
-  loopCount: 1,
+  loopCount: DEFAULT_LOOP_COUNT,
   rangeKm: 230,
   quality: "auto",
   followLatestLow: true,
@@ -147,8 +154,6 @@ const DEFAULTS = {
   endDwellMs: 600,
 };
 
-const STATIC_PREVIEW = Boolean(window.__MEOWDAR_STATIC_PREVIEW__);
-const URL_PARAMS = new URLSearchParams(window.location.search);
 const POLAR_RENDER_EXPERIMENT = URL_PARAMS.get("polar") === "1" || MAP_CONFIG.experimentalPolarRenderer === true;
 const MAP = {
   tileUrl: MAP_CONFIG.map?.tileUrl || "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
@@ -198,7 +203,16 @@ const state = {
   polarLayerGeneration: 0,
   polarLayerFailed: false,
   polarFrameCache: new Map(),
+  polarPlaybackFrameCache: new Map(),
+  polarPlaybackWarmGeneration: 0,
+  playbackFrameCache: new Map(),
+  playbackFrameWarmGeneration: 0,
   polarDebug: null,
+  perf: {
+    enabled: LOOP_TEST_MODE || URL_PARAMS.get("perf") === "1",
+    entries: [],
+    summary: {},
+  },
   toastTimer: null,
   activeCut: null,
   currentFrameTime: null,
@@ -292,8 +306,9 @@ document.body.dataset.polarRadar = "module-loaded";
 initialize();
 
 function initialize() {
+  configureLoopOptions();
   const saved = readPreferences();
-  state.site = resolveSitePreference(saved.site) || DEFAULTS.site;
+  state.site = resolveSitePreference(URL_PARAMS.get("site")) || resolveSitePreference(saved.site) || DEFAULTS.site;
   state.product = saved.product && PRODUCTS[saved.product] ? saved.product : DEFAULTS.product;
   state.mode = saved.mode === "archive" ? "archive" : "live";
   state.profile = saved.profile && PROFILES[saved.profile] ? saved.profile : DEFAULTS.profile;
@@ -361,6 +376,8 @@ function bindEvents() {
     if (!button || state.loading) return;
     state.profile = button.dataset.profile;
     clearAdaptiveFrameCache();
+    clearPolarFrameCache();
+    clearPlaybackFrameCache();
     ui.loopCountSelect.value = String(state.loopCount);
     savePreferences();
     syncPerformanceControl();
@@ -426,6 +443,8 @@ function bindEvents() {
   ui.qualitySelect?.addEventListener("change", async () => {
     state.quality = ui.qualitySelect.value;
     clearAdaptiveFrameCache();
+    clearPolarFrameCache();
+    clearPlaybackFrameCache();
     savePreferences();
     populateTiltChoices(state.allCuts, currentCutIndex());
     if (state.followLatestLow) await selectLowestCut(); else await enforceVisibleTilt();
@@ -435,6 +454,8 @@ function bindEvents() {
   ui.followLowToggle?.addEventListener("change", async () => {
     state.followLatestLow = ui.followLowToggle.checked;
     clearAdaptiveFrameCache();
+    clearPolarFrameCache();
+    clearPlaybackFrameCache();
     savePreferences();
     syncProfessionalControls();
     if (state.followLatestLow) await selectLowestCut();
@@ -443,6 +464,8 @@ function bindEvents() {
   ui.lowTiltMaxSelect?.addEventListener("change", async () => {
     state.lowTiltMax = Number(ui.lowTiltMaxSelect.value) || DEFAULTS.lowTiltMax;
     clearAdaptiveFrameCache();
+    clearPolarFrameCache();
+    clearPlaybackFrameCache();
     savePreferences();
     populateTiltChoices(state.allCuts, currentCutIndex());
     if (state.followLatestLow) await selectLowestCut(); else await enforceVisibleTilt();
@@ -685,8 +708,103 @@ function updateLoopMemoryEstimate() {
   ui.loopMemoryEstimate.classList.toggle("warning", heavy);
   ui.loopMemoryBar.classList.toggle("warning", heavy);
   ui.loopCountSelect.title = heavy
-    ? "Large full-resolution loops can use substantial memory. Loading remains progressive; Low Data is safer on modest hardware."
+    ? "Large full-resolution loops can use substantial memory. Loading is progressive, but 12 frames may take a while to build."
     : "Loop frames load after the newest scan is visible.";
+}
+
+function recordPerf(name, startTime, detail = {}) {
+  if (!state.perf?.enabled || typeof performance === "undefined") return;
+  const ms = Math.max(0, performance.now() - startTime);
+  const entry = {
+    name,
+    ms: Number(ms.toFixed(2)),
+    at: Number(performance.now().toFixed(2)),
+    ...detail,
+  };
+  state.perf.entries.push(entry);
+  if (state.perf.entries.length > 400) state.perf.entries.splice(0, state.perf.entries.length - 400);
+  const summary = state.perf.summary[name] || { count: 0, totalMs: 0, maxMs: 0, lastMs: 0 };
+  summary.count += 1;
+  summary.totalMs += ms;
+  summary.maxMs = Math.max(summary.maxMs, ms);
+  summary.lastMs = ms;
+  summary.avgMs = summary.totalMs / summary.count;
+  state.perf.summary[name] = summary;
+  window.__MEOWDAR_PERF__ = state.perf;
+}
+
+function markPerf(name, detail = {}) {
+  recordPerf(name, performance.now(), detail);
+}
+
+function timeSync(name, detail, task) {
+  const start = performance.now();
+  try {
+    return task();
+  } finally {
+    recordPerf(name, start, detail);
+  }
+}
+
+async function timeAsync(name, detail, task) {
+  const start = performance.now();
+  try {
+    return await task();
+  } finally {
+    recordPerf(name, start, detail);
+  }
+}
+
+function instrumentToolboxForPerf(toolbox) {
+  if (!toolbox || toolbox.__meowdarPerfInstrumented) return toolbox;
+  const methods = {
+    loadLoop: (...args) => ({ options: perfOptions(args[0]), site: args[0]?.site, frameCount: args[0]?.frameCount }),
+    livePlusArchiveFrames: (...args) => ({ site: args[0], count: args[1] }),
+    recentArchiveFrames: (...args) => ({ site: args[0], count: args[1] }),
+    latestRealtimeFrame: (...args) => ({ site: args[0] }),
+    realtimeVolume: (...args) => ({ site: args[0], volumeId: args[1] }),
+    archiveFramesForDate: (...args) => ({ site: args[0], date: args[1]?.toISOString?.() || String(args[1] || "") }),
+    frameMetadata: (...args) => ({ frame: frameIdentity(args[0]), product: args[1] }),
+    renderFrames: (...args) => ({ frames: Array.isArray(args[0]) ? args[0].length : 0, options: perfOptions(args[1]) }),
+    renderFrame: (...args) => ({ frame: frameIdentity(args[0]), options: perfOptions(args[1]) }),
+    volumeDiagnostics: (...args) => ({ frame: frameIdentity(args[0]) }),
+    renderNativePpi: (...args) => ({ frame: frameIdentity(args[0]), options: perfOptions(args[1]) }),
+    warmLoop: (...args) => ({ frames: args[0]?.frames?.length || args[0]?.length || 0, options: perfOptions(args[1]) }),
+    warmFrames: (...args) => ({ frames: Array.isArray(args[0]) ? args[0].length : 0, options: perfOptions(args[1]) }),
+  };
+
+  for (const [method, detail] of Object.entries(methods)) {
+    if (typeof toolbox[method] !== "function") continue;
+    const original = toolbox[method];
+    toolbox[method] = async function perfWrappedToolboxMethod(...args) {
+      const start = performance.now();
+      try {
+        return await original.apply(this, args);
+      } finally {
+        recordPerf(`bowecho.${method}`, start, detail(...args));
+      }
+    };
+  }
+
+  Object.defineProperty(toolbox, "__meowdarPerfInstrumented", {
+    value: true,
+    configurable: true,
+  });
+  return toolbox;
+}
+
+function perfOptions(options = {}) {
+  if (!options || typeof options !== "object") return {};
+  return {
+    mode: options.mode,
+    product: options.product,
+    cut: options.cut ?? options.cutIndex,
+    width: options.width,
+    height: options.height,
+    rangeKm: options.rangeKm,
+    smoothing: options.smoothing,
+    frameCount: options.frameCount,
+  };
 }
 
 function loopConcurrency() {
@@ -1066,6 +1184,7 @@ async function detectEngine() {
     if (typeof createToolbox !== "function") throw new Error("The BowEcho module does not export createRadarToolbox().");
     state.module = module;
     state.toolbox = createToolbox();
+    if (state.perf?.enabled) instrumentToolboxForPerf(state.toolbox);
     hydrateRadarSites(module);
     if (state.toolbox?.configureCache) {
       const cores = Math.max(2, Number(navigator.hardwareConcurrency || 4));
@@ -1120,10 +1239,21 @@ async function loadRadar() {
 
 async function loadLiveRadar(generation) {
   const profile = PROFILES[state.profile];
-  setLoading(true, `Loading the newest ${state.site} scan`, "Fetching one Level II volume...");
+  const initialFrameCount = 1;
+  const targetFrameCount = state.loopCount;
+  setLoading(
+    true,
+    `Loading the newest ${state.site} scan`,
+    targetFrameCount > 1
+      ? "Fetching the newest Level II volume first..."
+      : "Fetching one Level II volume..."
+  );
   cleanupRadarSession({ preserveGeneration: true });
 
-  const options = radarOptions({ mode: "live", frameCount: 1 });
+  const options = radarOptionsWithProgress(
+    radarOptions({ mode: "live", frameCount: initialFrameCount }),
+    "live.initialLoad",
+  );
   state.session = createSession(options);
 
   if (typeof state.session.subscribe === "function") {
@@ -1134,7 +1264,9 @@ async function loadLiveRadar(generation) {
     });
   }
 
-  await state.session.load({ ...options, frameCount: 1, concurrency: 1 });
+  await timeAsync("live.initialLoad", { frameCount: initialFrameCount }, () =>
+    state.session.load({ ...options, frameCount: initialFrameCount, concurrency: 1 })
+  );
   if (generation !== state.loadGeneration) return;
 
   state.snapshot = state.session.snapshot?.() || state.snapshot;
@@ -1143,13 +1275,17 @@ async function loadLiveRadar(generation) {
   state.loop = null;
   await moveLiveToLatest();
   syncSessionSnapshot(state.snapshot);
-  const rendered = await settleLiveSnapshot();
+  let rendered = await settleLiveSnapshot();
+  if (!rendered && liveFrameCount() > 1) {
+    rendered = await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
+  }
   if (!rendered) showToast("Waiting for the newest complete low sweep");
   setLivePresentation("Live", "NOAA Level II");
   setLoading(false);
   scheduleLivePoll();
 
-  if (state.loopCount > 1) scheduleLiveBackgroundLoop(generation, profile);
+  if (targetFrameCount > initialFrameCount) scheduleLiveBackgroundLoop(generation, profile);
+  else if (targetFrameCount > 1) await warmPlaybackFrameCache();
 }
 
 function createSession(options) {
@@ -1174,6 +1310,21 @@ function radarOptions({ mode, frameCount }) {
   };
 }
 
+function radarOptionsWithProgress(options, scope) {
+  return {
+    ...options,
+    onProgress: (event) => markPerf("bowecho.progress", {
+      scope,
+      stage: event?.stage,
+      site: event?.site,
+      mode: event?.mode,
+      product: event?.product,
+      cut: event?.cut,
+      frames: event?.frames,
+    }),
+  };
+}
+
 function scheduleLiveBackgroundLoop(generation, profile) {
   const backgroundId = ++state.backgroundGeneration;
   scheduleIdle(async () => {
@@ -1181,12 +1332,22 @@ function scheduleLiveBackgroundLoop(generation, profile) {
     state.loopBuilding = true;
     showBackgroundProgress(`Adding ${state.loopCount - 1} older scans…`);
     try {
-      const options = radarOptions({ mode: "live", frameCount: state.loopCount });
-      await state.session.load({ ...options, concurrency: 1 });
+      if (typeof state.session.setLoop === "function" && state.toolbox?.livePlusArchiveFrames && state.toolbox?.renderFrame) {
+        await expandLiveLoopIncrementally();
+      } else {
+        const options = radarOptionsWithProgress(
+          radarOptions({ mode: "live", frameCount: state.loopCount }),
+          "live.loopLoad",
+        );
+        await timeAsync("live.loopLoad", { frameCount: state.loopCount }, () =>
+          state.session.load({ ...options, concurrency: 1 })
+        );
+      }
       if (generation !== state.loadGeneration || backgroundId !== state.backgroundGeneration) return;
       state.snapshot = state.session.snapshot?.() || state.snapshot;
       await moveLiveToLatest();
       await settleLiveSnapshot();
+      await warmPlaybackFrameCache();
       showToast(`${liveFrameCount()}-scan loop ready`);
     } catch (error) {
       console.warn("Background loop expansion failed; keeping the first scan.", error);
@@ -1198,6 +1359,98 @@ function scheduleLiveBackgroundLoop(generation, profile) {
       }
     }
   });
+}
+
+async function expandLiveLoopIncrementally() {
+  const options = radarOptionsWithProgress(
+    radarOptions({ mode: "live", frameCount: state.loopCount }),
+    "live.loopExpand",
+  );
+  await timeAsync("live.loopExpand", { frameCount: state.loopCount }, async () => {
+    const existingLoop = state.session?.loop;
+    const existingRendered = new Map();
+    for (const rendered of existingLoop?.renderedFrames || []) {
+      const frame = rendered?.frame || rendered?.sourceFrame || rendered;
+      for (const key of renderedFrameLookupKeys(frame)) existingRendered.set(key, rendered);
+    }
+
+    const frames = await state.toolbox.livePlusArchiveFrames(state.site, state.loopCount, options);
+    const cut = Number.isFinite(Number(state.session?.cut))
+      ? Number(state.session.cut)
+      : Number.isFinite(Number(existingLoop?.cut))
+        ? Number(existingLoop.cut)
+        : Number.isFinite(Number(currentCutIndex()))
+          ? Number(currentCutIndex())
+          : 0;
+    const renderOptions = { ...options, cut };
+    delete renderOptions.onProgress;
+
+    const renderedFrames = [];
+    for (const frame of frames) {
+      const cached = renderedFrameLookupKeys(frame)
+        .map((key) => existingRendered.get(key))
+        .find(Boolean);
+      if (cached) {
+        renderedFrames.push(cached);
+        continue;
+      }
+      try {
+        const rendered = await timeAsync("live.loopRenderMissingFrame", { frame: frameIdentity(frame), cut }, () =>
+          state.toolbox.renderFrame(frame, renderOptions)
+        );
+        renderedFrames.push(rendered);
+      } catch (error) {
+        console.warn("Skipped an older live loop frame that could not render.", error);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    if (!renderedFrames.length) throw new Error("no renderable live loop frames");
+    const loop = makeSessionLoop({
+      site: state.site,
+      mode: "live",
+      product: state.product,
+      cut,
+      frames,
+      renderedFrames,
+      meta: existingLoop?.meta || renderedFrames[renderedFrames.length - 1]?.meta || null,
+      renderOptions,
+    });
+    if (typeof state.session.applyOptions === "function") state.session.applyOptions({ frameCount: state.loopCount, cut });
+    else state.session.frameCount = state.loopCount;
+    state.session.setLoop(loop, "latest");
+  });
+}
+
+function renderedFrameLookupKeys(frame) {
+  const keys = [
+    frame?.cacheKey,
+    frame?.id,
+    frameIdentity(frame),
+  ];
+  const time = extractFrameTime(frame);
+  if (time) keys.push(`time:${time.toISOString()}`);
+  return [...new Set(keys.filter(Boolean))];
+}
+
+function makeSessionLoop({ site, mode, product, cut, frames, renderedFrames, meta, renderOptions }) {
+  return {
+    site,
+    mode,
+    product,
+    cut,
+    frames,
+    renderedFrames,
+    meta,
+    renderOptions,
+    get length() {
+      return this.renderedFrames.length;
+    },
+    frame(index = this.renderedFrames.length - 1) {
+      const safeIndex = Math.max(0, Math.min(this.renderedFrames.length - 1, Number(index) || 0));
+      return this.renderedFrames[safeIndex];
+    },
+  };
 }
 
 async function loadArchiveRadar(generation) {
@@ -1261,6 +1514,7 @@ function scheduleArchiveBackgroundLoop(generation, date, targetTime) {
       state.loop = expanded;
       state.frameIndex = archiveFrameCount() - 1;
       await settleArchiveFrame();
+      await warmPlaybackFrameCache();
       showToast(`${archiveFrameCount()}-scan archive loop ready`);
     } catch (error) {
       console.warn("Archive loop expansion failed; keeping the first scan.", error);
@@ -1322,6 +1576,7 @@ function cleanupRadarSession({ preserveGeneration = false } = {}) {
   state.diagnosticsCache.clear();
   clearAdaptiveFrameCache();
   clearPolarFrameCache();
+  clearPlaybackFrameCache();
   removePolarRadarLayer();
   state.waitingForCompleteLow = false;
   state.hasRenderedRadar = false;
@@ -1399,7 +1654,7 @@ async function assessCurrentFrame(frame, generation) {
     state.diagnosticsFrameKey = key;
   } else {
     markDiagnosticsPending(key);
-    state.diagnostics = await diagnosticsForFrame(frame);
+    state.diagnostics = await timeAsync("frame.diagnostics", { key }, () => diagnosticsForFrame(frame));
   }
   if (generation !== state.diagnosticsGeneration) return false;
 
@@ -1427,7 +1682,7 @@ function syncSessionSnapshot(snapshot) {
   syncTimeline();
   if (snapshot.error) showToast(friendlyError(snapshot.error));
 
-  if (state.source === "live" && !state.loading) {
+  if (state.source === "live" && !state.loading && !playbackLoopActive()) {
     const frame = state.session?.currentFrame?.();
     if (frame && frameIdentity(frame) !== state.diagnosticsFrameKey) {
       void settleLiveSnapshot().catch((error) => console.warn("Could not settle live radar frame", error));
@@ -1461,7 +1716,7 @@ async function settleLiveSnapshot({ restoreHeld = true } = {}) {
     const snapshotIsLatest = state.snapshot.index >= count - 1;
     if (!(liveFrameHoldActive(count) && snapshotIsLatest)) state.frameIndex = state.snapshot.index;
   }
-  const displayFrame = state.followLatestLow
+  const displayFrame = state.followLatestLow && !playbackLoopActive()
     ? await renderAdaptiveLowSweepFrame(current, { sourceFrame: current?.frame || current?.sourceFrame || current })
     : current;
   if (settlementGeneration !== state.snapshotSettleGeneration || state.source !== "live") return false;
@@ -1642,6 +1897,8 @@ async function enforceVisibleTilt({ render = true } = {}) {
 async function applyTilt(cutIndex, { showOverlay = false, render = true } = {}) {
   if (!Number.isFinite(cutIndex)) return false;
   clearAdaptiveFrameCache();
+  clearPolarFrameCache();
+  clearPlaybackFrameCache();
   if (state.source === "preview") return true;
   const cut = normalizedCutByIndex(cutIndex);
   if (cut && !cutAccepted(cut)) {
@@ -1748,6 +2005,8 @@ function updateQualityPresentation({ preview = false } = {}) {
 async function switchProduct() {
   if (state.loading) return;
   clearAdaptiveFrameCache();
+  clearPolarFrameCache();
+  clearPlaybackFrameCache();
   try {
     setLoading(true, `Rendering ${PRODUCTS[state.product].short}`, "Rendering from the local decoded volume…");
     state.paletteManager?.setProduct();
@@ -1792,6 +2051,8 @@ async function switchProduct() {
 
 async function applyPalette() {
   clearAdaptiveFrameCache();
+  clearPolarFrameCache();
+  clearPlaybackFrameCache();
   updateLegend();
   if (state.source === "preview") {
     renderPreview();
@@ -1881,6 +2142,36 @@ function clearAdaptiveFrameCache() {
 
 function clearPolarFrameCache() {
   state.polarFrameCache?.clear?.();
+  clearPolarPlaybackFrameCache();
+}
+
+function clearPolarPlaybackFrameCache() {
+  state.polarPlaybackFrameCache?.clear?.();
+  state.polarPlaybackWarmGeneration += 1;
+}
+
+function clearPlaybackFrameCache() {
+  for (const entry of state.playbackFrameCache?.values?.() || []) {
+    entry?.bitmap?.close?.();
+  }
+  state.playbackFrameCache?.clear?.();
+  state.playbackFrameWarmGeneration += 1;
+}
+
+function playbackLoopActive() {
+  return state.isPlaying && currentFrameCount() > 1;
+}
+
+function nativePolarPlaybackEnabled() {
+  return POLAR_RENDER_EXPERIMENT
+    && state.profile === "full"
+    && state.source !== "preview"
+    && typeof state.toolbox?.renderNativePpi === "function"
+    && currentFrameCount() > 1;
+}
+
+function nativePolarAllowedForCurrentFrame() {
+  return !playbackLoopActive();
 }
 
 function adaptiveFrameCacheLimit() {
@@ -1899,6 +2190,224 @@ function shortHash(text) {
   return (hash >>> 0).toString(36);
 }
 
+function playbackFrameCacheKey(frame) {
+  return [
+    frameIdentity(frame),
+    state.product,
+    state.profile,
+    frame?.width || frame?.image?.width || "",
+    frame?.height || frame?.image?.height || "",
+    state.activeCut?.index ?? frame?.renderOptions?.cut ?? frame?.renderOptions?.cutIndex ?? "",
+  ].join("|");
+}
+
+function renderedFrameImageData(frame) {
+  const width = Number(frame?.width || frame?.image?.width || 0);
+  const height = Number(frame?.height || frame?.image?.height || 0);
+  if (!width || !height) return null;
+  if (frame?.imageData instanceof ImageData) return frame.imageData;
+  if (frame?.image?.imageData instanceof ImageData) return frame.image.imageData;
+  const rgba = frame?.rgba || frame?.image?.rgba;
+  if (!rgba) return null;
+  const pixels = rgba instanceof Uint8ClampedArray ? rgba : new Uint8ClampedArray(rgba);
+  return new ImageData(pixels, width, height);
+}
+
+async function ensurePlaybackFrameBitmap(frame) {
+  if (!frame || typeof createImageBitmap !== "function") return null;
+  const key = playbackFrameCacheKey(frame);
+  const cached = state.playbackFrameCache.get(key);
+  if (cached) {
+    state.playbackFrameCache.delete(key);
+    state.playbackFrameCache.set(key, cached);
+    return cached;
+  }
+  const entry = await timeAsync("playback.bitmap.create", { key }, async () => {
+    const imageData = renderedFrameImageData(frame);
+    if (!imageData) return null;
+    const bitmap = await createImageBitmap(imageData);
+    return {
+      key,
+      bitmap,
+      width: imageData.width,
+      height: imageData.height,
+    };
+  });
+  if (!entry) return null;
+  state.playbackFrameCache.set(key, entry);
+  const maxEntries = Math.max(3, currentFrameCount());
+  while (state.playbackFrameCache.size > maxEntries) {
+    const first = state.playbackFrameCache.keys().next().value;
+    const old = state.playbackFrameCache.get(first);
+    old?.bitmap?.close?.();
+    state.playbackFrameCache.delete(first);
+  }
+  return entry;
+}
+
+function cachedPlaybackFrame(frame) {
+  return state.playbackFrameCache.get(playbackFrameCacheKey(frame));
+}
+
+function playbackFrames() {
+  const frames = [];
+  for (let index = 0; index < currentFrameCount(); index += 1) {
+    const frame = state.source === "live" ? liveFrameAt(index) : getArchiveFrame(index);
+    if (frame) frames.push(frame);
+  }
+  return frames;
+}
+
+function playbackFrameCacheReady() {
+  const frames = playbackFrames();
+  return frames.length >= currentFrameCount() && frames.every((frame) => cachedPlaybackFrame(frame)?.bitmap);
+}
+
+function cachedNativePolarPlaybackFrame(frame) {
+  return state.polarPlaybackFrameCache.get(playbackFrameCacheKey(frame));
+}
+
+function nativePolarPlaybackCacheReady() {
+  if (!nativePolarPlaybackEnabled()) return false;
+  const frames = playbackFrames();
+  return frames.length >= currentFrameCount() && frames.every((frame) => cachedNativePolarPlaybackFrame(frame)?.data);
+}
+
+async function preparePlaybackFrameCache({ generation = state.playbackFrameWarmGeneration } = {}) {
+  if (currentFrameCount() < 2) return;
+  const frames = playbackFrames();
+  if (!frames.length) return;
+  updatePolarDebug({ ...(state.polarDebug || {}), playbackCache: "warming" });
+  const start = performance.now();
+  for (const frame of frames) {
+    if (generation !== state.playbackFrameWarmGeneration) return;
+    try {
+      await ensurePlaybackFrameBitmap(frame);
+    } catch (error) {
+      console.warn("Could not warm playback frame cache", error);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  recordPerf("playback.cache.warm", start, { frames: frames.length, cacheSize: state.playbackFrameCache.size });
+  updatePolarDebug({ ...(state.polarDebug || {}), playbackCache: "ready", playbackCacheSize: state.playbackFrameCache.size });
+}
+
+async function prepareNativePolarPlaybackCache({ generation = state.polarPlaybackWarmGeneration } = {}) {
+  if (!nativePolarPlaybackEnabled()) return false;
+  const frames = playbackFrames();
+  if (!frames.length) return false;
+  const start = performance.now();
+  let ready = 0;
+  updatePolarDebug({ ...(state.polarDebug || {}), nativePlaybackCache: "warming" });
+
+  for (const frame of frames) {
+    if (generation !== state.polarPlaybackWarmGeneration) return false;
+    const key = playbackFrameCacheKey(frame);
+    if (state.polarPlaybackFrameCache.get(key)?.data) {
+      ready += 1;
+      continue;
+    }
+    try {
+      const data = await buildPolarLayerData(frame);
+      if (data) {
+        state.polarPlaybackFrameCache.set(key, { key, data });
+        ready += 1;
+      }
+    } catch (error) {
+      console.warn("Could not warm native polar playback frame", error);
+    }
+    while (state.polarPlaybackFrameCache.size > Math.max(3, currentFrameCount())) {
+      state.polarPlaybackFrameCache.delete(state.polarPlaybackFrameCache.keys().next().value);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  const complete = ready >= frames.length;
+  recordPerf("polar.playback.cache.warm", start, {
+    frames: frames.length,
+    ready,
+    complete,
+    cacheSize: state.polarPlaybackFrameCache.size,
+  });
+  updatePolarDebug({
+    ...(state.polarDebug || {}),
+    nativePlaybackCache: complete ? "ready" : "partial",
+    nativePlaybackCacheSize: state.polarPlaybackFrameCache.size,
+  });
+  return complete;
+}
+
+async function warmPlaybackFrameCache() {
+  if (currentFrameCount() < 2) return;
+  const generation = ++state.playbackFrameWarmGeneration;
+  scheduleIdle(async () => {
+    await preparePlaybackFrameCache({ generation });
+  });
+  warmNativePolarPlaybackCache();
+}
+
+async function warmNativePolarPlaybackCache() {
+  if (!nativePolarPlaybackEnabled()) return;
+  const generation = ++state.polarPlaybackWarmGeneration;
+  scheduleIdle(async () => {
+    await prepareNativePolarPlaybackCache({ generation });
+  });
+}
+
+function renderCachedNativePolarFrame(frame) {
+  if (!nativePolarPlaybackEnabled()) return false;
+  const cached = cachedNativePolarPlaybackFrame(frame);
+  if (!cached?.data) return false;
+  return timeSync("polar.playback.frame.cachedSwap", { key: cached.data.key }, () => {
+    clearPreviewOverlay();
+    state.polarLayerData = cached.data;
+    if (!ensurePolarRadarLayer()) return false;
+    setRadarRasterFallbackVisible(false);
+    state.map?.triggerRepaint?.();
+    state.hasRenderedRadar = true;
+    updateFramePresentation(frame);
+    updateQualityPresentation();
+    updatePolarDebug({
+      status: "native-playback",
+      playbackCache: "native",
+      nativePlaybackCache: "hit",
+      nativePlaybackCacheSize: state.polarPlaybackFrameCache.size,
+      gateCount: cached.data.gateCount,
+      radialCount: cached.data.radialCount,
+      rangeKm: cached.data.rangeKm,
+    });
+    return true;
+  });
+}
+
+function renderCachedPlaybackFrame(frame) {
+  const cached = cachedPlaybackFrame(frame);
+  if (!cached?.bitmap) return false;
+  return timeSync("playback.frame.cachedDraw", { key: cached.key }, () => {
+    clearPreviewOverlay();
+    const context = ui.radarCanvas.getContext("2d", { alpha: true });
+    if (!context) return false;
+    if (ui.radarCanvas.width !== cached.width) ui.radarCanvas.width = cached.width;
+    if (ui.radarCanvas.height !== cached.height) ui.radarCanvas.height = cached.height;
+    context.imageSmoothingEnabled = false;
+    context.clearRect(0, 0, cached.width, cached.height);
+    context.drawImage(cached.bitmap, 0, 0);
+    if (state.mapReady && state.map) {
+      const source = state.map.getSource?.(MAP.sourceId);
+      if (source) pulseCanvasSource(source);
+      else mountRadarCanvas(null);
+    }
+    state.polarLayerData = null;
+    updatePolarDebug({ status: "raster-playback", playbackCache: "hit", playbackCacheSize: state.playbackFrameCache.size });
+    removePolarRadarLayer();
+    setRadarRasterFallbackVisible(true);
+    state.hasRenderedRadar = true;
+    updateFramePresentation(frame);
+    updateQualityPresentation();
+    return true;
+  });
+}
+
 async function renderAdaptiveLowSweepFrame(frame, { sourceFrame = null } = {}) {
   if (!state.followLatestLow || !frame || !state.activeCut || typeof state.toolbox?.renderFrame !== "function") return frame;
   const source = sourceFrame || frame?.frame || frame?.sourceFrame || frame;
@@ -1915,7 +2424,7 @@ async function renderAdaptiveLowSweepFrame(frame, { sourceFrame = null } = {}) {
     return cached;
   }
 
-  const rendered = await state.toolbox.renderFrame(source, {
+  const rendered = await timeAsync("frame.adaptiveRender", { key }, () => state.toolbox.renderFrame(source, {
     product: state.product,
     cut: state.activeCut.index,
     cutIndex: state.activeCut.index,
@@ -1924,7 +2433,7 @@ async function renderAdaptiveLowSweepFrame(frame, { sourceFrame = null } = {}) {
     rangeKm: DEFAULTS.rangeKm,
     smoothing: profile.smoothing,
     ...overrides,
-  });
+  }));
   if (!rendered) return frame;
   if (typeof rendered === "object") {
     rendered.sourceFrame = rendered.sourceFrame || source;
@@ -1941,30 +2450,41 @@ async function renderAdaptiveLowSweepFrame(frame, { sourceFrame = null } = {}) {
 }
 
 function renderFrame(frame) {
-  clearPreviewOverlay();
-  const layer = buildRadarLayer(frame);
-  state.radarLayer = layer;
+  return timeSync("frame.render", { playback: playbackLoopActive(), key: frameIdentity(frame) }, () => {
+    clearPreviewOverlay();
+    const layer = timeSync("frame.buildLayer", {}, () => buildRadarLayer(frame));
+    state.radarLayer = layer;
 
-  try {
-    const context = ui.radarCanvas.getContext("2d", { alpha: true });
-    if (context) context.imageSmoothingEnabled = false;
-    if (layer && typeof state.module?.drawRadarLayerToCanvas === "function") {
-      state.module.drawRadarLayerToCanvas(ui.radarCanvas, layer);
-    } else if (typeof state.module?.drawFrameToCanvas === "function") {
-      state.module.drawFrameToCanvas(ui.radarCanvas, frame);
-    } else {
-      throw new Error("This BowEcho bundle does not expose a canvas renderer.");
+    try {
+      timeSync("frame.canvasDraw", { method: layer ? "layer" : "frame" }, () => {
+        const context = ui.radarCanvas.getContext("2d", { alpha: true });
+        if (context) context.imageSmoothingEnabled = false;
+        if (layer && typeof state.module?.drawRadarLayerToCanvas === "function") {
+          state.module.drawRadarLayerToCanvas(ui.radarCanvas, layer);
+        } else if (typeof state.module?.drawFrameToCanvas === "function") {
+          state.module.drawFrameToCanvas(ui.radarCanvas, frame);
+        } else {
+          throw new Error("This BowEcho bundle does not expose a canvas renderer.");
+        }
+      });
+    } catch (error) {
+      console.warn("Radar canvas rendering failed.", error);
+      throw error;
     }
-  } catch (error) {
-    console.warn("Radar canvas rendering failed.", error);
-    throw error;
-  }
 
-  mountRadarCanvas(layer);
-  schedulePolarRadarLayer(frame);
-  state.hasRenderedRadar = true;
-  updateFramePresentation(frame);
-  updateQualityPresentation();
+    timeSync("frame.mountCanvas", {}, () => mountRadarCanvas(layer));
+    if (nativePolarAllowedForCurrentFrame()) {
+      schedulePolarRadarLayer(frame);
+    } else {
+      state.polarLayerData = null;
+      updatePolarDebug({ status: playbackLoopActive() ? "raster-playback" : "inactive" });
+      removePolarRadarLayer();
+      setRadarRasterFallbackVisible(true);
+    }
+    state.hasRenderedRadar = true;
+    updateFramePresentation(frame);
+    updateQualityPresentation();
+  });
 }
 
 function buildRadarLayer(frame) {
@@ -2180,7 +2700,7 @@ async function buildPolarLayerData(frame) {
     return cached;
   }
 
-  const native = await state.toolbox.renderNativePpi(sourceFrame, nativeOptions);
+  const native = await timeAsync("polar.nativePpi", { key }, () => state.toolbox.renderNativePpi(sourceFrame, nativeOptions));
   const meta = native?.meta || {};
   const gateRange = meta.gateRange || {};
   const texture = new Uint8Array(native.rgba);
@@ -2779,38 +3299,68 @@ async function stepFrame(direction) {
 }
 
 async function goToFrame(index) {
-  const count = currentFrameCount();
-  state.frameIndex = Math.max(0, Math.min(index, count - 1));
-  if (state.source === "live") rememberLiveFrameHold(count);
-  syncTimeline();
+  const activePlayback = playbackLoopActive();
+  return timeAsync("frame.goTo", { index, playback: activePlayback }, async () => {
+    const count = currentFrameCount();
+    state.frameIndex = Math.max(0, Math.min(index, count - 1));
 
-  try {
-    if (state.source === "preview") {
-      renderPreview();
-    } else if (state.source === "archive") {
-      await settleArchiveFrame();
-    } else if (state.source === "live") {
-      if (state.session?.setFrame) {
-        await state.session.setFrame(state.frameIndex);
-      } else if (state.frameIndex < Number(state.snapshot?.index ?? count - 1)) {
-        const delta = Number(state.snapshot?.index ?? count - 1) - state.frameIndex;
-        for (let i = 0; i < delta; i += 1) await state.session?.previousFrame?.();
-      } else if (state.frameIndex > Number(state.snapshot?.index ?? 0)) {
-        const delta = state.frameIndex - Number(state.snapshot?.index ?? 0);
-        for (let i = 0; i < delta; i += 1) await state.session?.nextFrame?.({ wrap: true });
+    try {
+      if (activePlayback) {
+        if (state.source === "preview") {
+          renderPreview();
+        } else if (state.source === "archive") {
+          const frame = getArchiveFrame(state.frameIndex);
+          if (renderCachedNativePolarFrame(frame)) {
+            return;
+          }
+          if (!renderCachedPlaybackFrame(frame)) {
+            recordPerf("playback.cache.miss", performance.now(), { source: "archive" });
+            renderArchiveFrame(frame);
+          }
+        } else if (state.source === "live") {
+          if (state.session && Number.isFinite(Number(state.session.index))) state.session.index = state.frameIndex;
+          const frame = liveFrameAt(state.frameIndex);
+          if (renderCachedNativePolarFrame(frame)) {
+            return;
+          }
+          if (!renderCachedPlaybackFrame(frame)) {
+            recordPerf("playback.cache.miss", performance.now(), { source: "live" });
+            renderLiveCurrentFrame(frame);
+          }
+        }
+        return;
       }
-      state.snapshot = state.session?.snapshot?.() || state.snapshot;
-      if (Number.isInteger(state.snapshot?.index)) state.frameIndex = state.snapshot.index;
-      rememberLiveFrameHold();
-      if (!await settleLiveSnapshot()) {
-        await settleBestLiveFrame({ startIndex: state.frameIndex, allowNewerFallback: true });
+
+      if (state.source === "live") rememberLiveFrameHold(count);
+      syncTimeline();
+
+      if (state.source === "preview") {
+        renderPreview();
+      } else if (state.source === "archive") {
+        await settleArchiveFrame();
+      } else if (state.source === "live") {
+        if (state.session?.setFrame) {
+          await state.session.setFrame(state.frameIndex);
+        } else if (state.frameIndex < Number(state.snapshot?.index ?? count - 1)) {
+          const delta = Number(state.snapshot?.index ?? count - 1) - state.frameIndex;
+          for (let i = 0; i < delta; i += 1) await state.session?.previousFrame?.();
+        } else if (state.frameIndex > Number(state.snapshot?.index ?? 0)) {
+          const delta = state.frameIndex - Number(state.snapshot?.index ?? 0);
+          for (let i = 0; i < delta; i += 1) await state.session?.nextFrame?.({ wrap: true });
+        }
+        state.snapshot = state.session?.snapshot?.() || state.snapshot;
+        if (Number.isInteger(state.snapshot?.index)) state.frameIndex = state.snapshot.index;
+        rememberLiveFrameHold();
+        if (!await settleLiveSnapshot()) {
+          await settleBestLiveFrame({ startIndex: state.frameIndex, allowNewerFallback: true });
+        }
       }
+    } catch (error) {
+      console.warn("Could not change radar frame", error);
+    } finally {
+      if (!activePlayback) syncTimeline();
     }
-  } catch (error) {
-    console.warn("Could not change radar frame", error);
-  } finally {
-    syncTimeline();
-  }
+  });
 }
 
 function schedulePlaybackStep() {
@@ -2820,17 +3370,35 @@ function schedulePlaybackStep() {
   const delay = state.loopSpeedMs + (atLastFrame ? state.endDwellMs : 0);
   state.playTimer = window.setTimeout(async () => {
     if (!state.isPlaying) return;
-    await stepFrame(1);
+    await timeAsync("playback.tick", { index: state.frameIndex }, () => stepFrame(1));
     schedulePlaybackStep();
   }, Math.max(100, delay));
 }
 
-function togglePlayback() {
+async function togglePlayback() {
   if (state.isPlaying) {
     stopPlayback();
     return;
   }
   if (currentFrameCount() < 2) return;
+  if (!playbackFrameCacheReady()) {
+    showBackgroundProgress("Preparing loop playback...");
+    try {
+      const generation = ++state.playbackFrameWarmGeneration;
+      await preparePlaybackFrameCache({ generation });
+    } finally {
+      hideBackgroundProgress();
+    }
+  }
+  if (nativePolarPlaybackEnabled() && !nativePolarPlaybackCacheReady()) {
+    showBackgroundProgress("Preparing native radar loop...");
+    try {
+      const generation = ++state.polarPlaybackWarmGeneration;
+      await prepareNativePolarPlaybackCache({ generation });
+    } finally {
+      hideBackgroundProgress();
+    }
+  }
   state.isPlaying = true;
   ui.playButton.classList.add("playing");
   ui.playButton.setAttribute("aria-pressed", "true");
@@ -2845,6 +3413,11 @@ function stopPlayback() {
   ui.playButton.classList.remove("playing");
   ui.playButton.setAttribute("aria-pressed", "false");
   ui.playButton.setAttribute("aria-label", "Play radar loop");
+  if (state.source === "live" && currentFrameCount() > 1) {
+    void settleLiveSnapshot().catch((error) => console.warn("Could not refresh paused radar frame", error));
+  } else if (state.source === "archive" && currentFrameCount() > 1) {
+    void settleArchiveFrame().catch((error) => console.warn("Could not refresh paused archive frame", error));
+  }
 }
 
 async function refreshRadar() {
@@ -3221,10 +3794,25 @@ function formatRelativeTime(date) {
   return formatTime(date, true);
 }
 
+function configureLoopOptions() {
+  if (!ui.loopCountSelect) return;
+  const allowed = new Set(LOCAL_LOOP_COUNTS.map(String));
+  for (const option of Array.from(ui.loopCountSelect.options)) {
+    if (!allowed.has(option.value)) option.remove();
+  }
+  for (const count of LOCAL_LOOP_COUNTS) {
+    const value = String(count);
+    if (Array.from(ui.loopCountSelect.options).some((option) => option.value === value)) continue;
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value;
+    ui.loopCountSelect.append(option);
+  }
+}
+
 function normalizeLoopCount(value) {
-  const allowed = [1];
   const numeric = Number(value);
-  return allowed.includes(numeric) ? numeric : DEFAULTS.loopCount;
+  return LOCAL_LOOP_COUNTS.includes(numeric) ? numeric : DEFAULTS.loopCount;
 }
 
 function liveFrameHoldActive(count = currentFrameCount()) {
