@@ -206,11 +206,14 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
 .catalog-empty, .catalog-muted { color: #404040; }
 .catalog-chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0; }
 .catalog-chip { padding: 3px 6px; background: #dedede; border-top: 1px solid #fff; border-left: 1px solid #fff; border-right: 1px solid #808080; border-bottom: 1px solid #808080; font-weight: 700; }
+.catalog-evidence { display: grid; gap: 4px; margin: 7px 0; }
+.catalog-evidence a, .catalog-evidence span { min-width: 0; overflow-wrap: anywhere; color: #000080; }
 .catalog-target-list { display: grid; gap: 8px; margin-top: 10px; }
 .catalog-target { padding: 8px; background: #f7f7f7; border-top: 2px solid #fff; border-left: 2px solid #fff; border-right: 2px solid #808080; border-bottom: 2px solid #808080; }
 .catalog-target-head { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; justify-content: space-between; }
 .catalog-target-head strong { font-size: 13px; }
 .catalog-target-meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; color: #303030; }
+.catalog-target-meta span { overflow-wrap: anywhere; }
 .catalog-radar-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
 .catalog-radar-row button { min-height: 25px; padding: 3px 7px; background: #fff; border-top: 2px solid #fff; border-left: 2px solid #fff; border-right: 2px solid #000; border-bottom: 2px solid #000; font-weight: 700; }
 .catalog-radar-row button:active { border-top-color: #000; border-left-color: #000; border-right-color: #fff; border-bottom-color: #fff; transform: translate(1px,1px); }

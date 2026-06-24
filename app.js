@@ -145,7 +145,7 @@ const PROFILES = {
 const URL_LINK = parseUrlLink(URL_PARAMS);
 const SPC_ARCHIVE_DATA_BASE = MAP_CONFIG.archiveCatalog?.dataBaseUrl || "https://fahrenheitresearch.github.io/spc-enhanced-day-classification/data";
 const CATALOG_TARGET_LIMIT = 20;
-const CATALOG_TARGET_KIND_RESERVE = 5;
+const CATALOG_TARGET_MIN_PER_KIND = 2;
 
 const DEFAULTS = {
   site: chooseDefaultRadarSite("KMUX"),
@@ -247,6 +247,7 @@ const state = {
     currentTargets: [],
     loading: false,
     reportsCache: new Map(),
+    tornadoTargetCache: new Map(),
   },
 };
 
@@ -1455,10 +1456,13 @@ async function selectCatalogDay(day) {
   renderCatalogDetail(record, { loading: true });
   try {
     if (!state.engineReady) await detectEngine();
-    const eventDay = await fetchCatalogReports(day);
-    const targets = buildCatalogTargets(record, eventDay).slice(0, CATALOG_TARGET_LIMIT);
+    const [eventDay, tornadoTargets] = await Promise.all([
+      fetchCatalogReports(day),
+      fetchCatalogTornadoTargets(day),
+    ]);
+    const targets = buildCatalogTargets(record, eventDay, tornadoTargets).slice(0, CATALOG_TARGET_LIMIT);
     state.catalog.currentTargets = targets;
-    renderCatalogDetail(record, { eventDay, targets });
+    renderCatalogDetail(record, { eventDay, tornadoTargets, targets });
     ui.catalogStatus.textContent = `${day}: ${targets.length} radar target${targets.length === 1 ? "" : "s"} generated`;
   } catch (error) {
     renderCatalogDetail(record, { error });
@@ -1475,12 +1479,44 @@ async function fetchCatalogReports(day) {
   return promise;
 }
 
+async function fetchCatalogTornadoTargets(day) {
+  if (state.catalog.tornadoTargetCache.has(day)) return state.catalog.tornadoTargetCache.get(day);
+  const promise = catalogJson(`tornado_targets/${day}.json`).catch((error) => {
+    if (!/HTTP 404/i.test(error?.message || "")) {
+      console.warn(`Tornado target catalog unavailable for ${day}`, error);
+    }
+    return null;
+  });
+  state.catalog.tornadoTargetCache.set(day, promise);
+  return promise;
+}
+
 function dominantCatalogKind(record) {
+  const weights = catalogTargetKindWeights(record);
+  return Object.entries(weights)
+    .filter(([, weight]) => weight > 0)
+    .sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+}
+
+function catalogTargetKindWeights(record) {
   const text = catalogDayText(record);
-  if (/mcs|derecho|bow|qlcs|wind damage|damaging wind/.test(text)) return "wind";
-  if (/hail|lapse rate/.test(text)) return "hail";
-  if (/tornado|supercell|cyclic/.test(text)) return "tornado";
-  return "";
+  const primary = String(record.primary || "").toLowerCase();
+  if (/high_end_tornado|tornado_outbreak|violent tornado|violent_tornado|strong tornado|strong_tornado|long-track|long track|cyclic_supercell|cyclic supercell|discrete_supercell|discrete supercell/.test(`${primary} ${text}`)) {
+    return { tornado: 7, wind: 2, hail: 2, other: 0.4 };
+  }
+  if (/qlcs_bowing_wind_tornado|qlcs tornado|embedded qlcs circulation|embedded circulations/.test(text)) {
+    return { wind: 5, tornado: 4, hail: 1.5, other: 0.4 };
+  }
+  if (/derecho|serial_mcs|forward_propagating_mcs|mcs|bow echo|bowing|damaging wind|destructive wind|significant wind|wind damage|squall line/.test(text)) {
+    return { wind: 7, tornado: 2.5, hail: 1.5, other: 0.4 };
+  }
+  if (/very_large_hail|large hail|hail|lapse rate|lapse/.test(text)) {
+    return { hail: 6, tornado: 2, wind: 2, other: 0.4 };
+  }
+  if (/tornado|supercell|cyclic/.test(text)) {
+    return { tornado: 5, wind: 2.5, hail: 2, other: 0.4 };
+  }
+  return { wind: 3, hail: 2, tornado: 2, other: 0.4 };
 }
 
 function reportMagnitude(report) {
@@ -1491,11 +1527,24 @@ function reportMagnitude(report) {
   return numeric;
 }
 
-function catalogReportScore(report, preferredKind) {
+function catalogReportScore(report, preferredKind, kindWeights = {}) {
   const kindBase = report.kind === "tornado" ? 3500 : report.kind === "wind" ? 2500 : report.kind === "hail" ? 2200 : 1000;
   const preferred = preferredKind && report.kind === preferredKind ? 3500 : 0;
+  const weighted = Number(kindWeights[report.kind] || 0) * 250;
   const magnitude = report.kind === "hail" ? reportMagnitude(report) * 900 : reportMagnitude(report) * 35;
-  return kindBase + preferred + magnitude;
+  return kindBase + preferred + weighted + magnitude;
+}
+
+function catalogTornadoTargetScore(event, preferredKind, kindWeights = {}) {
+  const ratingValue = Number(event?.rating_value);
+  const ef = Number.isFinite(ratingValue) ? Math.max(0, ratingValue) : 0;
+  const fatalities = Math.max(0, Number(event?.fatalities) || 0);
+  const injuries = Math.max(0, Number(event?.injuries) || 0);
+  const pathLength = Math.max(0, Number(event?.path_length_mi) || 0);
+  const width = Math.max(0, Number(event?.width_yd) || 0);
+  const preferred = preferredKind === "tornado" ? 3500 : 0;
+  const weighted = Number(kindWeights.tornado || 0) * 300;
+  return 5200 + preferred + weighted + ef * 1300 + fatalities * 350 + injuries * 70 + pathLength * 25 + width * 1.5;
 }
 
 function nearestCatalogRadars(report, limit = 3) {
@@ -1509,8 +1558,19 @@ function nearestCatalogRadars(report, limit = 3) {
       distanceMi: haversineMiles(lat, lon, Number(site.lat), Number(site.lon)),
     }))
     .filter((radar) => Number.isFinite(radar.distanceMi))
-    .sort((a, b) => a.distanceMi - b.distanceMi)
+    .sort(catalogRadarSort)
     .slice(0, limit);
+}
+
+function catalogRadarSort(a, b) {
+  const rank = (radar) => {
+    const id = normalizeRadarSiteCode(radar.id);
+    if (id.startsWith("K")) return 0;
+    if (id.startsWith("P")) return 1;
+    if (id.startsWith("T")) return 2;
+    return 3;
+  };
+  return rank(a) - rank(b) || a.distanceMi - b.distanceMi;
 }
 
 function haversineMiles(lat1, lon1, lat2, lon2) {
@@ -1521,51 +1581,171 @@ function haversineMiles(lat1, lon1, lat2, lon2) {
   return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function buildCatalogTargets(record, eventDay) {
+function buildCatalogTargets(record, eventDay, tornadoTargets = null) {
   const preferredKind = dominantCatalogKind(record);
+  const kindWeights = catalogTargetKindWeights(record);
+  const richTornadoTargets = buildCatalogTornadoTargets(record, tornadoTargets, preferredKind, kindWeights);
   const reports = Array.from(eventDay?.reports || [])
+    .filter((report) => !(richTornadoTargets.length && report?.kind === "tornado"))
     .filter((report) => report?.timeUtc && Number.isFinite(Number(report.lat)) && Number.isFinite(Number(report.lon)))
     .map((report, index) => {
       const radars = nearestCatalogRadars(report);
       return {
         id: `${record.day}-${index}`,
         record,
+        source: "spc-report",
         report,
         radars,
-        score: catalogReportScore(report, preferredKind),
+        score: catalogReportScore(report, preferredKind, kindWeights),
       };
     })
     .filter((target) => target.radars.length);
 
   const uniqueTargets = [];
   const duplicateKeys = new Set();
-  for (const target of reports.sort((a, b) => b.score - a.score)) {
+  for (const target of [...richTornadoTargets, ...reports].sort((a, b) => b.score - a.score)) {
     const key = catalogTargetDedupeKey(target);
     if (duplicateKeys.has(key)) continue;
     duplicateKeys.add(key);
     uniqueTargets.push(target);
   }
 
-  const kindOrder = catalogTargetKindOrder(preferredKind, uniqueTargets);
-  const grouped = new Map(kindOrder.map((kind) => [kind, uniqueTargets.filter((target) => (target.report.kind || "other") === kind)]));
+  return allocateCatalogTargets(uniqueTargets, kindWeights);
+}
+
+function buildCatalogTornadoTargets(record, tornadoTargets, preferredKind, kindWeights) {
+  const events = Array.isArray(tornadoTargets?.events) ? tornadoTargets.events : [];
+  return events
+    .filter((event) => event?.time_utc && Number.isFinite(Number(event.begin_lat)) && Number.isFinite(Number(event.begin_lon)))
+    .map((event, index) => {
+      const report = normalizeCatalogTornadoEvent(event);
+      const radars = normalizeCatalogTornadoRadars(event);
+      if (!radars.length) radars.push(...nearestCatalogRadars(report));
+      return {
+        id: `${record.day}-tor-${index}`,
+        record,
+        source: "tornado-target",
+        event,
+        report,
+        radars,
+        score: catalogTornadoTargetScore(event, preferredKind, kindWeights),
+      };
+    })
+    .filter((target) => target.radars.length);
+}
+
+function normalizeCatalogTornadoEvent(event) {
+  const rating = String(event.rating || "").trim();
+  const magnitudeLabel = rating || (event.rating_estimated ? "estimated" : "");
+  return {
+    kind: "tornado",
+    timeUtc: event.vwp_target_utc || event.time_utc,
+    eventTimeUtc: event.time_utc,
+    lat: Number(event.begin_lat),
+    lon: Number(event.begin_lon),
+    endLat: Number(event.end_lat),
+    endLon: Number(event.end_lon),
+    location: event.location,
+    county: event.county,
+    state: event.state,
+    magnitude: rating,
+    magnitudeLabel,
+    efLabel: rating,
+    ratingValue: Number(event.rating_value),
+    pathLengthMi: Number(event.path_length_mi),
+    widthYd: Number(event.width_yd),
+    injuries: Number(event.injuries),
+    fatalities: Number(event.fatalities),
+    comments: event.comments,
+    sourceUrl: event.source_url,
+    vwpStartUtc: event.vwp_start_utc,
+    vwpTargetUtc: event.vwp_target_utc,
+    vwpEndUtc: event.vwp_end_utc,
+  };
+}
+
+function normalizeCatalogTornadoRadars(event) {
+  const seen = new Set();
+  return Array.from(event?.nearest_radars || [])
+    .map((radar) => {
+      const id = normalizeRadarSiteCode(radar.id);
+      const distanceMi = Number(radar.distance_mi);
+      return {
+        id,
+        name: radar.name || id,
+        distanceMi,
+        vwpStartUtc: radar.vwp_start_utc,
+        vwpTargetUtc: radar.vwp_target_utc,
+        vwpEndUtc: radar.vwp_end_utc,
+      };
+    })
+    .filter((radar) => radar.id && !seen.has(radar.id) && Number.isFinite(radar.distanceMi) && seen.add(radar.id))
+    .sort(catalogRadarSort)
+    .slice(0, 3);
+}
+
+function allocateCatalogTargets(targets, kindWeights) {
+  const grouped = new Map();
+  for (const target of targets) {
+    const kind = target.report.kind || "other";
+    if (!grouped.has(kind)) grouped.set(kind, []);
+    grouped.get(kind).push(target);
+  }
+  for (const bucket of grouped.values()) bucket.sort((a, b) => b.score - a.score);
+  const kinds = Array.from(grouped.keys()).sort((a, b) => (kindWeights[b] || 0) - (kindWeights[a] || 0));
+  const quotas = catalogTargetQuotas(kinds, grouped, kindWeights);
   const selected = [];
   const selectedIds = new Set();
-  for (const kind of kindOrder) {
-    const candidates = grouped.get(kind) || [];
-    const reserve = Math.min(CATALOG_TARGET_KIND_RESERVE, candidates.length);
-    for (const target of candidates.slice(0, reserve)) {
+  for (const kind of kinds) {
+    const quota = quotas.get(kind) || 0;
+    for (const target of (grouped.get(kind) || []).slice(0, quota)) {
       selected.push(target);
       selectedIds.add(target.id);
-      if (selected.length >= CATALOG_TARGET_LIMIT) return selected;
     }
   }
-  for (const target of uniqueTargets) {
+  selected.sort((a, b) => b.score - a.score);
+  for (const target of targets.sort((a, b) => b.score - a.score)) {
+    if (selected.length >= CATALOG_TARGET_LIMIT) break;
     if (selectedIds.has(target.id)) continue;
     selected.push(target);
     selectedIds.add(target.id);
-    if (selected.length >= CATALOG_TARGET_LIMIT) break;
   }
-  return selected;
+  return selected.slice(0, CATALOG_TARGET_LIMIT);
+}
+
+function catalogTargetQuotas(kinds, grouped, kindWeights) {
+  const quotas = new Map();
+  const available = kinds.filter((kind) => grouped.get(kind)?.length);
+  if (!available.length) return quotas;
+  const limited = CATALOG_TARGET_LIMIT;
+  const minKinds = available.filter((kind) => kind !== "other");
+  let remaining = limited;
+  for (const kind of minKinds) {
+    const reserve = Math.min(CATALOG_TARGET_MIN_PER_KIND, grouped.get(kind).length, remaining);
+    quotas.set(kind, reserve);
+    remaining -= reserve;
+  }
+  const totalWeight = available.reduce((sum, kind) => sum + Math.max(0.1, Number(kindWeights[kind] || 0.4)), 0);
+  const shares = available.map((kind) => {
+    const weight = Math.max(0.1, Number(kindWeights[kind] || 0.4));
+    const raw = remaining * weight / totalWeight;
+    return { kind, raw, whole: Math.floor(raw), fraction: raw % 1 };
+  });
+  for (const share of shares) {
+    if (remaining <= 0) break;
+    const capacity = grouped.get(share.kind).length - (quotas.get(share.kind) || 0);
+    const extra = Math.min(capacity, share.whole, remaining);
+    if (extra > 0) quotas.set(share.kind, (quotas.get(share.kind) || 0) + extra);
+    remaining -= extra;
+  }
+  const rankedShares = shares.sort((a, b) => b.fraction - a.fraction || (kindWeights[b.kind] || 0) - (kindWeights[a.kind] || 0));
+  while (remaining > 0) {
+    const nextKind = rankedShares.find((share) => (quotas.get(share.kind) || 0) < grouped.get(share.kind).length)?.kind;
+    if (!nextKind) break;
+    quotas.set(nextKind, (quotas.get(nextKind) || 0) + 1);
+    remaining -= 1;
+  }
+  return quotas;
 }
 
 function catalogTargetDedupeKey(target) {
@@ -1584,14 +1764,13 @@ function catalogTargetKindOrder(preferredKind, targets) {
   return order.filter((kind, index) => available.has(kind) && order.indexOf(kind) === index);
 }
 
-function renderCatalogDetail(record, { loading = false, eventDay = null, targets = [], error = null } = {}) {
-  const text = catalogDayText(record);
+function renderCatalogDetail(record, { loading = false, eventDay = null, tornadoTargets = null, targets = [], error = null } = {}) {
   const packs = [
     record.risk,
     `${record.ofb || "none"} OFB/MCS`,
-    ...(record.hazards || []).slice(0, 4),
-    ...(record.modes || []).slice(0, 4),
-    ...(record.tags || []).slice(0, 5),
+    ...(record.hazards || []),
+    ...(record.modes || []),
+    ...(record.tags || []),
   ].filter(Boolean);
   const reportCounts = eventDay?.reports?.reduce((acc, report) => {
     acc[report.kind] = (acc[report.kind] || 0) + 1;
@@ -1606,38 +1785,98 @@ function renderCatalogDetail(record, { loading = false, eventDay = null, targets
     .filter((kind) => targetCounts[kind])
     .map((kind) => `${targetCounts[kind]} ${kind}`)
     .join(", ");
+  const tornadoSummary = catalogTornadoSummary(tornadoTargets);
   ui.catalogDetail.innerHTML = `
     <h3>${escapeHtml(record.day)} - ${escapeHtml(formatCatalogClass(record.primary))}</h3>
     <p>${escapeHtml(record.narrative || "")}</p>
     <div class="catalog-chip-row">${packs.map((item) => `<span class="catalog-chip">${escapeHtml(formatCatalogClass(item))}</span>`).join("")}</div>
     <p class="catalog-muted">${escapeHtml(record.ofb_reason || "")}</p>
-    ${loading ? `<p class="catalog-empty">Generating report-based radar targets...</p>` : ""}
+    ${renderCatalogEvidence(record)}
+    ${loading ? `<p class="catalog-empty">Generating hazard-weighted radar targets...</p>` : ""}
     ${error ? `<p class="catalog-empty">Could not generate targets: ${escapeHtml(friendlyError(error))}</p>` : ""}
-    ${eventDay ? `<p class="catalog-muted">SPC reports: ${reportCounts.wind || 0} wind, ${reportCounts.hail || 0} hail, ${reportCounts.tornado || 0} tornado. Showing ${targets.length} balanced radar targets${targetMix ? ` (${escapeHtml(targetMix)})` : ""}.</p>` : ""}
+    ${tornadoSummary ? `<p class="catalog-muted">Tornado targets: ${escapeHtml(tornadoSummary)}.</p>` : ""}
+    ${eventDay ? `<p class="catalog-muted">SPC reports: ${reportCounts.wind || 0} wind, ${reportCounts.hail || 0} hail, ${reportCounts.tornado || 0} tornado. Showing ${targets.length} hazard-weighted radar targets${targetMix ? ` (${escapeHtml(targetMix)})` : ""}.</p>` : ""}
     ${targets.length ? `<div class="catalog-target-list">${targets.map(renderCatalogTarget).join("")}</div>` : (!loading && !error ? `<p class="catalog-empty">No report-based targets found for this day.</p>` : "")}
+  `;
+}
+
+function catalogTornadoSummary(tornadoTargets) {
+  const count = Number(tornadoTargets?.tornado_count);
+  if (!Number.isFinite(count) || count <= 0) return "";
+  const parts = [`${count.toLocaleString()} surveyed track${count === 1 ? "" : "s"}`];
+  if (tornadoTargets.strongest_rating) parts.push(`${tornadoTargets.strongest_rating} strongest`);
+  const fatalities = Number(tornadoTargets.total_fatalities);
+  const injuries = Number(tornadoTargets.total_injuries);
+  if (Number.isFinite(fatalities) && fatalities > 0) parts.push(`${fatalities.toLocaleString()} fatalit${fatalities === 1 ? "y" : "ies"}`);
+  if (Number.isFinite(injuries) && injuries > 0) parts.push(`${injuries.toLocaleString()} injur${injuries === 1 ? "y" : "ies"}`);
+  return parts.join(", ");
+}
+
+function renderCatalogEvidence(record) {
+  const evidence = Array.isArray(record.evidence) ? record.evidence.slice(0, 4) : [];
+  if (!evidence.length) return "";
+  return `
+    <div class="catalog-evidence">
+      ${evidence.map((item) => {
+        const source = escapeHtml(item.source || "SPC evidence");
+        const quote = item.quote ? `: ${escapeHtml(item.quote)}` : "";
+        const url = item.url ? String(item.url) : "";
+        return url
+          ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${source}${quote}</a>`
+          : `<span>${source}${quote}</span>`;
+      }).join("")}
+    </div>
   `;
 }
 
 function renderCatalogTarget(target) {
   const report = target.report;
-  const time = new Date(report.timeUtc);
-  const label = `${String(report.kind || "report").toUpperCase()} ${report.magnitudeLabel || report.magnitude || ""}`.trim();
+  const time = new Date(catalogTargetTimeUtc(target));
+  const label = catalogTargetLabel(report);
   const place = [report.location, report.county, report.state].filter(Boolean).join(", ");
+  const meta = catalogTargetMeta(target);
   return `
     <article class="catalog-target">
       <div class="catalog-target-head">
         <strong>${escapeHtml(label)}</strong>
-        <span>${escapeHtml(Number.isFinite(time.getTime()) ? formatTime(time, true) : String(report.timeUtc))}</span>
+        <span>${escapeHtml(Number.isFinite(time.getTime()) ? formatTime(time, true) : String(catalogTargetTimeUtc(target) || ""))}</span>
       </div>
       <div class="catalog-target-meta">
         <span>${escapeHtml(place || `${report.lat}, ${report.lon}`)}</span>
-        <span>score ${Math.round(target.score)}</span>
+        ${meta.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
       </div>
       <div class="catalog-radar-row">
         ${target.radars.map((radar, index) => `<button type="button" data-catalog-target="${escapeHtml(target.id)}:${index}">${escapeHtml(radar.id)} ${Math.round(radar.distanceMi)} mi</button>`).join("")}
       </div>
     </article>
   `;
+}
+
+function catalogTargetLabel(report) {
+  const kind = String(report.kind || "report").toUpperCase();
+  const value = report.efLabel || report.magnitudeLabel || report.magnitude || "";
+  return `${kind} ${value}`.trim();
+}
+
+function catalogTargetMeta(target) {
+  const report = target.report || {};
+  const meta = [];
+  if (target.source === "tornado-target") meta.push("surveyed track");
+  const path = Number(report.pathLengthMi);
+  if (Number.isFinite(path) && path > 0) meta.push(`${trimNumber(path)} mi path`);
+  const width = Number(report.widthYd);
+  if (Number.isFinite(width) && width > 0) meta.push(`${Math.round(width)} yd wide`);
+  const fatalities = Number(report.fatalities);
+  const injuries = Number(report.injuries);
+  if ((Number.isFinite(fatalities) && fatalities > 0) || (Number.isFinite(injuries) && injuries > 0)) {
+    meta.push(`${Number.isFinite(fatalities) ? fatalities : 0} fatal / ${Number.isFinite(injuries) ? injuries : 0} inj`);
+  }
+  meta.push(`score ${Math.round(target.score)}`);
+  return meta;
+}
+
+function trimNumber(value) {
+  return Number(value).toFixed(1).replace(/\.0$/, "");
 }
 
 function catalogTargetById(value) {
@@ -1647,10 +1886,19 @@ function catalogTargetById(value) {
   return target && radar ? { ...target, radar } : null;
 }
 
+function catalogTargetTimeUtc(target) {
+  return target?.radar?.vwpTargetUtc
+    || target?.report?.vwpTargetUtc
+    || target?.report?.timeUtc
+    || target?.event?.vwp_target_utc
+    || target?.event?.time_utc
+    || "";
+}
+
 async function loadCatalogTarget(target) {
   const report = target.report;
   const radar = target.radar;
-  const targetDate = new Date(report.timeUtc);
+  const targetDate = new Date(catalogTargetTimeUtc(target));
   if (!Number.isFinite(targetDate.getTime())) {
     showToast("That report does not have a usable UTC time");
     return;
