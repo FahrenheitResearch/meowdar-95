@@ -138,7 +138,7 @@ const DEFAULTS = {
   mode: "live",
   product: "REF",
   profile: "full",
-  loopCount: 3,
+  loopCount: 1,
   rangeKm: 230,
   quality: "auto",
   followLatestLow: true,
@@ -3222,7 +3222,7 @@ function formatRelativeTime(date) {
 }
 
 function normalizeLoopCount(value) {
-  const allowed = [1, 3];
+  const allowed = [1];
   const numeric = Number(value);
   return allowed.includes(numeric) ? numeric : DEFAULTS.loopCount;
 }
