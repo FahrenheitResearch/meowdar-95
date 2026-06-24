@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Cache Warm Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #101417;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      button {
+        min-height: 32px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 512px minmax(360px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+
+      canvas {
+        width: 512px;
+        height: 512px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      pre {
+        margin: 0;
+        color: #d4dde1;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 940px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="run">Run cache warm path</button>
+      </header>
+      <div class="grid">
+        <canvas id="radar" width="512" height="512"></canvas>
+        <pre id="status">ready</pre>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        WORKER_VERSION,
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        run: document.getElementById("run"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+      };
+
+      els.run.addEventListener("click", runCacheWarmPath);
+      runCacheWarmPath();
+
+      async function runCacheWarmPath() {
+        els.run.disabled = true;
+        try {
+          els.status.textContent = "configuring worker cache";
+          const configured = await toolbox.configureCache({
+            bytes: 36,
+            volumes: 32,
+            renders: 200,
+          });
+
+          els.status.textContent = "loading REF loop";
+          const loop = await toolbox.loadLoop({
+            site: "KTLX",
+            mode: "live",
+            product: "REF",
+            frameCount: 2,
+            width: 512,
+            height: 512,
+            rangeKm: 230,
+          });
+
+          els.status.textContent = "warming DVEL metadata and decoded volumes";
+          const warmOnce = await toolbox.warmLoop(loop, {
+            product: "DVEL",
+            metadata: true,
+            concurrency: 2,
+          });
+          const warmTwice = await toolbox.warmLoop(loop, {
+            product: "DVEL",
+            metadata: true,
+            concurrency: 2,
+          });
+
+          els.status.textContent = "rerendering DVEL from warm loop frames";
+          const dvelLoop = await toolbox.rerenderLoop(loop, {
+            product: "DVEL",
+            width: 512,
+            height: 512,
+          });
+          const frame = dvelLoop.frame(dvelLoop.length - 1);
+          drawFrameToCanvas(els.radar, frame);
+          const stats = await toolbox.stats();
+
+          els.status.textContent = JSON.stringify({
+            workerVersion: WORKER_VERSION,
+            configuredLimits: configured.limits,
+            loop: {
+              site: loop.site,
+              sourceProduct: loop.product,
+              rerenderProduct: dvelLoop.product,
+              length: loop.length,
+              frameIds: loop.frames.map((item) => item.id),
+            },
+            warmOnce: summarizeWarm(warmOnce),
+            warmTwice: summarizeWarm(warmTwice),
+            render: {
+              product: dvelLoop.product,
+              width: frame.width,
+              height: frame.height,
+              elapsedMs: Math.round(frame.elapsedMs),
+              cacheHit: frame.cacheHit,
+            },
+            stats: {
+              bytes: stats.bytes,
+              volumes: stats.volumes,
+              renders: stats.renders,
+              metadata: stats.metadata,
+              limits: stats.limits,
+            },
+            canvas: {
+              width: els.radar.width,
+              height: els.radar.height,
+              clientWidth: els.radar.clientWidth,
+              clientHeight: els.radar.clientHeight,
+            },
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.run.disabled = false;
+        }
+      }
+
+      function summarizeWarm(result) {
+        return {
+          warmed: result.warmed,
+          failed: result.failed,
+          elapsedMs: Math.round(result.elapsedMs),
+          hits: result.frames.map((frame) => ({
+            frameId: frame.frameId,
+            byteCacheHit: frame.byteCacheHit,
+            volumeCacheHit: frame.volumeCacheHit,
+            metaCacheHit: frame.metaCacheHit,
+            error: frame.error || null,
+          })),
+        };
+      }
+    </script>
+  </body>
+</html>

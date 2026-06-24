@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Byte/Archive Import Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #111417;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button,
+      input {
+        min-height: 32px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 512px minmax(360px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+
+      canvas {
+        width: 512px;
+        height: 512px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      pre {
+        margin: 0;
+        color: #cbd4d8;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 940px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="live">Fetch live bytes</button>
+        <input id="file" type="file" accept=".zip,.ar2,.gz,.bz2,.h5,.hdf5,.nc,.swp,.tar,application/zip,application/x-zip-compressed" />
+      </header>
+      <div class="grid">
+        <canvas id="radar" width="512" height="512"></canvas>
+        <pre id="status">ready</pre>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        live: document.getElementById("live"),
+        file: document.getElementById("file"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+      };
+
+      els.live.addEventListener("click", loadLiveBytes);
+      els.file.addEventListener("change", () => {
+        const file = els.file.files?.[0];
+        if (file) loadFile(file);
+      });
+      loadLiveBytes();
+
+      async function loadLiveBytes() {
+        els.live.disabled = true;
+        try {
+          els.status.textContent = "fetching live chunks as raw bytes";
+          const frame = await toolbox.latestRealtimeFrame("KTLX");
+          const bytes = await fetchFrameBytes(frame);
+          const imported = await toolbox.importBytesFrame(bytes, {
+            id: `imported-${frame.id}`,
+            fileName: `${frame.id}.level2`,
+            source: "local-bytes",
+          });
+          await renderImported(imported);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.live.disabled = false;
+        }
+      }
+
+      async function loadFile(file) {
+        try {
+          els.status.textContent = "importing local radar file or archive";
+          const imported = await toolbox.importFileFrame(file);
+          await renderImported(imported);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        }
+      }
+
+      async function renderImported(imported) {
+        els.status.textContent = "rendering imported frame";
+        const loop = await toolbox.loadImportedLoop([imported], {
+          product: "REF",
+          width: 512,
+          height: 512,
+          rangeKm: 230,
+        });
+        const frame = loop.frame(0);
+        drawFrameToCanvas(els.radar, frame);
+        const importedStatus = {
+          id: imported.frame.id,
+          source: imported.frame.source,
+          provider: imported.frame.provider,
+          format: imported.frame.format,
+          size: imported.frame.size,
+          merge: imported.frame.merge,
+          partCount: imported.frame.partCount,
+        };
+        if (imported.frame.archiveEntries?.length) {
+          importedStatus.archiveEntries = imported.frame.archiveEntries.map((entry) => ({
+            name: entry.name,
+            size: entry.uncompressedSize,
+            method: entry.compressionMethod,
+          }));
+        }
+        els.status.textContent = JSON.stringify({
+          imported: {
+            ...importedStatus,
+          },
+          summary: {
+            site: imported.summary.site,
+            volumeTime: imported.summary.volumeTime,
+            cutCount: imported.summary.cutCount,
+            moments: imported.summary.moments,
+          },
+          render: {
+            width: frame.width,
+            height: frame.height,
+            elapsedMs: Math.round(frame.elapsedMs),
+            cacheHit: frame.cacheHit,
+          },
+          canvas: {
+            width: els.radar.width,
+            height: els.radar.height,
+            clientWidth: els.radar.clientWidth,
+            clientHeight: els.radar.clientHeight,
+          },
+        }, null, 2);
+      }
+
+      async function fetchFrameBytes(frame) {
+        if (frame.urls?.length) {
+          const parts = await Promise.all(frame.urls.map(async (url) =>
+            new Uint8Array(await (await fetch(url)).arrayBuffer())
+          ));
+          const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
+          const joined = new Uint8Array(total);
+          let offset = 0;
+          for (const part of parts) {
+            joined.set(part, offset);
+            offset += part.byteLength;
+          }
+          return joined;
+        }
+        return new Uint8Array(await (await fetch(frame.url)).arrayBuffer());
+      }
+    </script>
+  </body>
+</html>

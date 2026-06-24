@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho TOR Tracks Loop Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #101214;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button,
+      input {
+        min-height: 32px;
+      }
+
+      input[type="range"] {
+        width: 260px;
+      }
+
+      .stage {
+        position: relative;
+        width: 600px;
+        height: 600px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      canvas {
+        position: absolute;
+        inset: 0;
+        width: 600px;
+        height: 600px;
+      }
+
+      pre {
+        margin: 0;
+        color: #cbd4d8;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="load">Load TOR tracks</button>
+        <button id="play">Play</button>
+        <input id="scrub" type="range" min="0" max="0" value="0" />
+      </header>
+      <div class="stage">
+        <canvas id="radar" width="600" height="600"></canvas>
+        <canvas id="tracks" width="600" height="600"></canvas>
+        <canvas id="tds" width="600" height="600"></canvas>
+      </div>
+      <pre id="status">ready</pre>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        drawFrameToCanvas,
+        drawTorTracksToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        load: document.getElementById("load"),
+        play: document.getElementById("play"),
+        scrub: document.getElementById("scrub"),
+        radar: document.getElementById("radar"),
+        tracks: document.getElementById("tracks"),
+        tds: document.getElementById("tds"),
+        status: document.getElementById("status"),
+      };
+      let loop = null;
+      let trackLoop = null;
+      let timer = null;
+
+      els.load.addEventListener("click", load);
+      els.play.addEventListener("click", togglePlay);
+      els.scrub.addEventListener("input", () => showFrame(Number(els.scrub.value)));
+      load();
+
+      async function load() {
+        stop();
+        els.load.disabled = true;
+        try {
+          els.status.textContent = "loading live loop";
+          loop = await toolbox.loadLoop({
+            site: "KTLX",
+            mode: "live",
+            product: "REF",
+            frameCount: 4,
+            width: 600,
+            height: 600,
+            rangeKm: 150,
+          });
+          els.status.textContent = "building 500 m TOR-track grid";
+          trackLoop = await toolbox.renderTorTracksLoop(loop, {
+            site: loop.site,
+            halfExtentKm: 150,
+            cellKm: 0.5,
+          });
+          els.scrub.max = String(Math.max(0, trackLoop.length - 1));
+          els.scrub.value = String(trackLoop.length - 1);
+          showFrame(trackLoop.length - 1);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+
+      function showFrame(index) {
+        if (!loop || !trackLoop) return;
+        const clamped = Math.max(0, Math.min(trackLoop.length - 1, index));
+        const frame = loop.frame(clamped);
+        const tracks = trackLoop.frame(clamped);
+        const layer = trackLoop.layer(clamped);
+        drawFrameToCanvas(els.radar, frame);
+        drawTorTracksToCanvas(els.tracks, tracks);
+        drawTds(els.tds, layer);
+        els.scrub.value = String(clamped);
+        els.status.textContent = [
+          `${loop.site} ${frame.frame.volumeTime || frame.frame.id}`,
+          `radar ${frame.width}x${frame.height} ${Math.round(frame.elapsedMs)} ms cache=${frame.cacheHit}`,
+          `tracks ${tracks.width}x${tracks.height} ${Math.round(tracks.elapsedMs)} ms cache=${tracks.cacheHit}`,
+          `accumulated ${tracks.meta.accumulatedFrames || 1}/${trackLoop.length}`,
+          `shear painted ${tracks.meta.valueRange?.painted || 0}, TDS ${layer.counts.tds || 0}`,
+        ].join("\n");
+      }
+
+      function togglePlay() {
+        if (timer) {
+          stop();
+          return;
+        }
+        els.play.textContent = "Pause";
+        timer = setInterval(() => {
+          const next = (Number(els.scrub.value) + 1) % Math.max(1, trackLoop?.length || 1);
+          showFrame(next);
+        }, 450);
+      }
+
+      function stop() {
+        if (timer) clearInterval(timer);
+        timer = null;
+        els.play.textContent = "Play";
+      }
+
+      function drawTds(canvas, layer) {
+        canvas.width = layer.image.width;
+        canvas.height = layer.image.height;
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.lineWidth = 2;
+        ctx.font = "12px system-ui, sans-serif";
+        for (const feature of layer.tds.geojson.features) {
+          const x = canvas.width * 0.5 + Number(feature.properties.eastKm || 0) / layer.grid.kmPerPxX;
+          const y = canvas.height * 0.5 - Number(feature.properties.northKm || 0) / layer.grid.kmPerPxY;
+          ctx.strokeStyle = "#ffffff";
+          ctx.fillStyle = "#ff4a6a";
+          ctx.beginPath();
+          ctx.arc(x, y, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+          ctx.fillStyle = "#ffffff";
+          ctx.lineWidth = 3;
+          ctx.strokeText("TDS", x + 10, y - 8);
+          ctx.fillText("TDS", x + 10, y - 8);
+        }
+      }
+    </script>
+  </body>
+</html>

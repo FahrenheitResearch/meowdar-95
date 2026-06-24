@@ -1,0 +1,36 @@
+/index.html
+  Cache-Control: public, max-age=0, must-revalidate
+
+/demo.html
+  Cache-Control: public, max-age=300
+
+/app.js
+  Cache-Control: public, max-age=300
+
+/palette-manager.js
+  Cache-Control: public, max-age=300
+
+/scan-quality.js
+  Cache-Control: public, max-age=300
+
+/glm-controller.js
+  Cache-Control: public, max-age=300
+
+/lightning-worker.js
+  Cache-Control: public, max-age=300
+
+/config.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/styles.css
+  Cache-Control: public, max-age=300
+
+/*.png
+  Cache-Control: public, max-age=86400
+
+/vendor/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/vendor/*.wasm
+  Content-Type: application/wasm
+  Cache-Control: public, max-age=31536000, immutable

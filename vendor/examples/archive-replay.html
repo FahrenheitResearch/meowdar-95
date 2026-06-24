@@ -1,0 +1,366 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho NEXRAD Archive Replay</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(150px, 1.2fr) 138px 118px 80px repeat(3, 96px) minmax(160px, 1fr);
+        gap: 6px;
+        align-items: end;
+        padding: 8px;
+      }
+
+      label {
+        display: grid;
+        gap: 2px;
+        min-width: 0;
+      }
+
+      select,
+      input,
+      button {
+        min-height: 26px;
+        min-width: 0;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        border-radius: 0;
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      button:disabled {
+        color: #777777;
+      }
+
+      .stage {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 360px;
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .canvas-panel {
+        padding: 6px;
+        min-height: 0;
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        display: block;
+        width: min(100%, calc(100vh - 188px));
+        max-height: calc(100vh - 188px);
+        aspect-ratio: 1;
+        background: #050607;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+        image-rendering: pixelated;
+      }
+
+      aside {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        min-height: 0;
+      }
+
+      .frames {
+        margin: 0;
+        padding: 8px;
+        min-height: 0;
+        overflow: auto;
+        background: #ffffff;
+        border-top: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .status {
+        padding: 6px 8px;
+        min-height: 38px;
+      }
+
+      footer {
+        padding: 6px 8px;
+      }
+
+      @media (max-width: 1180px) {
+        .toolbar {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .stage {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          width: min(100%, 78vh);
+          max-height: 58vh;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho NEXRAD Archive Replay</div>
+        <div class="toolbar">
+          <label>
+            Site
+            <select id="site"></select>
+          </label>
+          <label>
+            Date
+            <input id="date" type="date" />
+          </label>
+          <label>
+            Target UTC
+            <input id="time" type="time" step="1" />
+          </label>
+          <label>
+            Frames
+            <input id="count" type="number" min="1" max="24" value="8" />
+          </label>
+          <label>
+            Product
+            <select id="product"></select>
+          </label>
+          <label>
+            Cut
+            <select id="cut"></select>
+          </label>
+          <button id="list">List</button>
+          <button id="load">Load</button>
+        </div>
+      </section>
+
+      <section class="stage">
+        <div class="window canvas-panel">
+          <canvas id="radar" width="768" height="768"></canvas>
+        </div>
+        <aside class="window">
+          <div class="status" id="status">ready</div>
+          <pre class="frames" id="frames"></pre>
+        </aside>
+      </section>
+
+      <footer class="window" id="footer"></footer>
+    </main>
+
+    <script type="module">
+      import {
+        PRODUCT_CATALOG,
+        RADAR_SITES,
+        archiveFrameWindow,
+        createRadarToolbox,
+        cutChoicesFromMetadata,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        site: document.getElementById("site"),
+        date: document.getElementById("date"),
+        time: document.getElementById("time"),
+        count: document.getElementById("count"),
+        product: document.getElementById("product"),
+        cut: document.getElementById("cut"),
+        list: document.getElementById("list"),
+        load: document.getElementById("load"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+        frames: document.getElementById("frames"),
+        footer: document.getElementById("footer"),
+      };
+      let plannedFrames = [];
+      let loop = null;
+      let frameIndex = 0;
+      let timer = null;
+
+      for (const site of RADAR_SITES) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} ${site.name}`;
+        option.selected = site.id === "KTLX";
+        els.site.appendChild(option);
+      }
+
+      for (const product of PRODUCT_CATALOG) {
+        const option = document.createElement("option");
+        option.value = product.id;
+        option.textContent = product.label;
+        els.product.appendChild(option);
+      }
+
+      const yesterday = new Date(Date.now() - 86400_000);
+      els.date.value = yesterday.toISOString().slice(0, 10);
+      els.time.value = "23:59:59";
+
+      els.list.addEventListener("click", listFrames);
+      els.load.addEventListener("click", loadLoop);
+      els.product.addEventListener("change", async () => {
+        if (!loop) return;
+        await rerender({ product: els.product.value });
+      });
+      els.cut.addEventListener("change", async () => {
+        if (!loop) return;
+        await rerender({ cut: Number(els.cut.value) });
+      });
+
+      async function listFrames() {
+        setBusy(true, "listing archive day");
+        try {
+          plannedFrames = await toolbox.archiveFramesForDate(els.site.value, els.date.value);
+          const window = selectedWindow(plannedFrames);
+          els.frames.textContent = plannedFrames.map((frame, index) => {
+            const mark = window.frames.includes(frame) ? "*" : " ";
+            return `${mark} ${String(index + 1).padStart(3, " ")} ${frame.volumeTime || frame.id} ${Math.round((frame.size || 0) / 1024)} KB`;
+          }).join("\n");
+          els.status.textContent = `${plannedFrames.length} volumes listed, ${window.frames.length} selected`;
+          els.footer.textContent = toolbox.nexradArchiveListingUrl(els.site.value, els.date.value);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function loadLoop() {
+        setBusy(true, "loading archive loop");
+        try {
+          if (!plannedFrames.length) plannedFrames = await toolbox.archiveFramesForDate(els.site.value, els.date.value);
+          const window = selectedWindow(plannedFrames);
+          loop = await toolbox.loadImportedLoop(window.frames, {
+            site: els.site.value,
+            mode: "archive",
+            product: els.product.value,
+            width: els.radar.width,
+            height: els.radar.height,
+            rangeKm: 230,
+          });
+          loop.archiveWindow = window;
+          frameIndex = Math.max(0, loop.length - 1);
+          populateCuts();
+          drawCurrent();
+          startPlayback();
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function rerender(options) {
+        setBusy(true, "rerendering");
+        try {
+          loop = await toolbox.rerenderLoop(loop, options);
+          populateCuts();
+          drawCurrent();
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      function selectedWindow(frames) {
+        const targetTime = els.time.value ? `${els.date.value}T${els.time.value}Z` : null;
+        return archiveFrameWindow(frames, {
+          site: els.site.value,
+          date: els.date.value,
+          targetTime,
+          frameCount: Number(els.count.value),
+        });
+      }
+
+      function populateCuts() {
+        const choices = cutChoicesFromMetadata(loop.meta, {
+          selectedCut: loop.cut,
+          displayableOnly: false,
+        });
+        els.cut.replaceChildren();
+        for (const choice of choices) {
+          const option = document.createElement("option");
+          option.value = choice.index;
+          option.textContent = choice.label;
+          option.selected = choice.index === loop.cut;
+          els.cut.appendChild(option);
+        }
+      }
+
+      function drawCurrent() {
+        if (!loop?.length) return;
+        const rendered = loop.frame(frameIndex);
+        drawFrameToCanvas(els.radar, rendered);
+        const source = rendered.frame.volumeTime || rendered.frame.id;
+        els.status.textContent = `${loop.site} ${loop.product} cut ${loop.cut}  frame ${frameIndex + 1}/${loop.length}\n${source}\nrender ${Math.round(rendered.elapsedMs)} ms cache=${rendered.cacheHit}`;
+      }
+
+      function startPlayback() {
+        clearInterval(timer);
+        timer = setInterval(() => {
+          if (!loop?.length) return;
+          frameIndex = (frameIndex + 1) % loop.length;
+          drawCurrent();
+        }, 150);
+      }
+
+      function setBusy(busy, label = "") {
+        els.list.disabled = busy;
+        els.load.disabled = busy;
+        if (label) els.status.textContent = label;
+      }
+
+      listFrames();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Client Radar</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="desktop">
+      <header class="titlebar">
+        <div class="title">
+          <span class="app-icon"></span>
+          <div>
+            <h1>BowEcho Client Radar</h1>
+            <p id="frameLabel">client-side Level II decode/render</p>
+          </div>
+        </div>
+        <div class="window-buttons">
+          <button aria-label="Minimize"></button>
+          <button aria-label="Maximize"></button>
+          <button aria-label="Close"></button>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="panel controls">
+          <div class="panel-title">Controls</div>
+          <label class="field">
+            <span>Site</span>
+            <input id="siteInput" value="KTLX" maxlength="5" />
+          </label>
+
+          <div class="field">
+            <span>Mode</span>
+            <div class="button-pair">
+              <button id="liveModeButton" class="pressed">Live</button>
+              <button id="recentModeButton">Recent</button>
+            </div>
+          </div>
+
+          <div class="field">
+            <span>Product</span>
+            <div id="productGrid" class="product-grid"></div>
+          </div>
+
+          <label class="field">
+            <span>Tilt</span>
+            <select id="tiltSelect"></select>
+            <b id="tiltLabel">cut 00</b>
+          </label>
+
+          <label class="field">
+            <span>Range</span>
+            <input id="rangeInput" type="range" min="80" max="460" value="230" step="10" />
+            <b id="rangeLabel">230 km</b>
+          </label>
+
+          <label class="field">
+            <span>Frames</span>
+            <input id="frameCountInput" type="range" min="2" max="10" value="6" step="1" />
+            <b id="frameCountLabel">6</b>
+          </label>
+
+          <label class="field">
+            <span>Loop</span>
+            <input id="fpsInput" type="range" min="2" max="18" value="10" step="1" />
+            <b id="fpsLabel">10 fps</b>
+          </label>
+
+          <div class="button-pair">
+            <button id="loadButton">Load</button>
+            <button id="liveButton">Poll</button>
+          </div>
+
+          <label class="checkbox-row">
+            <input id="autoLiveInput" type="checkbox" checked />
+            <span>Auto poll</span>
+          </label>
+
+          <div class="status-box">
+            <div><b>Engine</b><span id="engineStatus">WASM worker</span></div>
+            <div><b>Data</b><span id="dataStatus">S3 direct</span></div>
+            <div><b>Pixels</b><span id="pixelChip">1:1</span></div>
+          </div>
+        </aside>
+
+        <section class="panel map-panel">
+          <div class="panel-title">Radar Sites</div>
+          <div id="siteMap" class="site-map"></div>
+          <input id="siteSearch" class="site-search" placeholder="Search ID or city" />
+          <div id="siteList" class="site-list"></div>
+        </section>
+
+        <section class="radar-column">
+          <div class="panel radar-panel">
+            <div class="panel-title">Display</div>
+            <div id="radarStage" class="radar-stage">
+              <canvas id="radarCanvas"></canvas>
+              <canvas id="overlayCanvas"></canvas>
+              <div id="loadVeil" class="load-veil">
+                <span id="loadText">ready</span>
+                <div class="meter"><i id="loadMeter"></i></div>
+              </div>
+            </div>
+          </div>
+
+          <footer class="panel transport">
+            <button id="playButton">Pause</button>
+            <input id="scrubber" type="range" min="0" max="0" value="0" step="1" />
+            <div id="filmstrip" class="filmstrip"></div>
+          </footer>
+        </section>
+      </section>
+    </main>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script type="module" src="/app.js?v=2026-06-13-analysis1"></script>
+</body>
+</html>

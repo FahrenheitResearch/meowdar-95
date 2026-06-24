@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho SPC Event Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: end;
+        padding: 8px;
+      }
+
+      label {
+        display: grid;
+        gap: 2px;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        border-radius: 0;
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      .content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 420px;
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .map-panel {
+        padding: 6px;
+        min-height: 0;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 680px);
+        min-height: 380px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      pre {
+        margin: 0;
+        height: calc(min(70vh, 680px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 8px;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      @media (max-width: 1050px) {
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 52vh;
+        }
+
+        pre {
+          height: 320px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho SPC Event Planner</div>
+        <div class="toolbar">
+          <label>
+            Day
+            <input id="day" type="date" value="2011-04-27" />
+          </label>
+          <label>
+            Source
+            <select id="mode">
+              <option value="mock">Mock</option>
+              <option value="live">Live</option>
+            </select>
+          </label>
+          <label>
+            Pad
+            <input id="pad" type="number" min="0" max="12" value="2" />
+          </label>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window map-panel">
+          <canvas id="map" width="980" height="640"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status">ready</pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        RADAR_SITES,
+        eventArchivePlanForTrack,
+        fetchSpcEventDay,
+        parseSpcReportsCombined,
+        parseSpcTornadoSegments,
+        spcReportsUrls,
+        tornadoSegmentsFromReports,
+      } from "../radar-toolbox.js";
+
+      const mockReports = `Time,F_Scale,Location,County,State,Lat,Lon,Comments
+2242,EF2,2 S Streator,Livingston,IL,41.09,-88.84,Large tornado. (LOT)
+Time,Speed,Location,County,State,Lat,Lon,Comments
+1215,UNK,3 W Dallas Center,Dallas,IA,41.69,-94.02,Tree damage. (DMX)
+Time,Size,Location,County,State,Lat,Lon,Comments
+0105,175,1 N Norman,Cleveland,OK,35.24,-97.44,Large hail. (OUN)`;
+      const mockWcm = `om,yr,mo,dy,date,time,tz,st,stf,stn,mag,inj,fat,loss,closs,slat,slon,elat,elon,len,wid,ns,sn,sg,f1,f2,f3,f4,f5,edat,etime
+1,2011,4,27,2011-04-27,14:05:00,3,AL,1,1,4,0,0,0,0,34.50,-87.00,35.00,-86.20,30.0,800,1,1,1,,,,,,2011-04-27,15:05:00`;
+
+      const els = {
+        day: document.getElementById("day"),
+        mode: document.getElementById("mode"),
+        pad: document.getElementById("pad"),
+        plan: document.getElementById("plan"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+      };
+      const ctx = els.map.getContext("2d");
+
+      els.plan.addEventListener("click", plan);
+      plan();
+
+      async function plan() {
+        els.plan.disabled = true;
+        els.status.textContent = "planning";
+        try {
+          const day = els.day.value;
+          const data = els.mode.value === "live"
+            ? await fetchSpcEventDay(day, { includeConsolidated: false })
+            : mockEventDay(day);
+          const segment = data.segments[0] || tornadoSegmentsFromReports(data.reports)[0];
+          const frames = segment ? mockArchiveFrames(segment) : [];
+          const eventPlan = segment
+            ? eventArchivePlanForTrack(segment, {
+              frames,
+              sites: RADAR_SITES,
+              padFrames: Number(els.pad.value),
+              frameCount: 16,
+            })
+            : null;
+          draw(data, eventPlan);
+          els.status.textContent = [
+            `${data.convectiveDate}`,
+            `${data.reports.length} reports`,
+            `${data.segments.length} tornado segments`,
+            data.reportUrl || spcReportsUrls(day)[0],
+            eventPlan
+              ? `primary ${eventPlan.radarSelection?.primary?.id || "none"} overlay ${eventPlan.radarSelection?.overlay?.id || "none"}`
+              : "no tornado segment",
+            eventPlan?.archiveWindow
+              ? `${eventPlan.archiveWindow.frames.length} archive frames ${eventPlan.startTime} to ${eventPlan.endTime}`
+              : "",
+            "",
+            data.segments.slice(0, 12).map((item, index) =>
+              `${index + 1}. ${item.timeUtc} ${item.efLabel} ${item.location} ${item.begin.lat.toFixed(2)},${item.begin.lon.toFixed(2)}`
+            ).join("\n"),
+          ].filter(Boolean).join("\n");
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.plan.disabled = false;
+        }
+      }
+
+      function mockEventDay(day) {
+        const reports = parseSpcReportsCombined(day, mockReports);
+        const segments = parseSpcTornadoSegments(day, mockWcm);
+        return {
+          type: "spc-event-day-v1",
+          convectiveDate: day,
+          reports,
+          segments,
+          reportsFileMissing: false,
+          reportUrl: "mock://spc/reports",
+          segmentUrls: ["mock://spc/wcm"],
+        };
+      }
+
+      function mockArchiveFrames(segment) {
+        const start = new Date(segment.timeUtc).getTime() - 20 * 60_000;
+        return Array.from({ length: 20 }, (_, index) => {
+          const time = new Date(start + index * 5 * 60_000).toISOString().replace(".000Z", "Z");
+          return {
+            id: `mock-${index + 1}`,
+            site: "KHTX",
+            source: "archive",
+            volumeTime: time,
+          };
+        });
+      }
+
+      function draw(data, eventPlan) {
+        const width = els.map.width;
+        const height = els.map.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#101719";
+        ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = "#47626b";
+        ctx.lineWidth = 1;
+        for (let lon = -125; lon <= -65; lon += 10) {
+          const a = project(25, lon);
+          const b = project(50, lon);
+          line(a, b);
+        }
+        for (let lat = 25; lat <= 50; lat += 5) {
+          const a = project(lat, -125);
+          const b = project(lat, -65);
+          line(a, b);
+        }
+        ctx.fillStyle = "#6fb7ff";
+        for (const site of RADAR_SITES) {
+          if (site.lat < 24 || site.lat > 50 || site.lon < -126 || site.lon > -65) continue;
+          const p = project(site.lat, site.lon);
+          ctx.fillRect(p.x - 1, p.y - 1, 2, 2);
+        }
+        ctx.strokeStyle = "#ff4050";
+        ctx.fillStyle = "#ff4050";
+        ctx.lineWidth = 3;
+        for (const segment of data.segments) {
+          const a = project(segment.begin.lat, segment.begin.lon);
+          const b = segment.end ? project(segment.end.lat, segment.end.lon) : a;
+          line(a, b);
+          ctx.fillRect(a.x - 3, a.y - 3, 6, 6);
+          ctx.fillRect(b.x - 3, b.y - 3, 6, 6);
+        }
+        if (eventPlan?.radarSelection?.primary) {
+          ctx.fillStyle = "#d6ff6b";
+          for (const site of [eventPlan.radarSelection.primary, eventPlan.radarSelection.overlay].filter(Boolean)) {
+            const p = project(site.lat, site.lon);
+            ctx.fillRect(p.x - 6, p.y - 6, 12, 12);
+            ctx.fillText(site.id, p.x + 8, p.y - 8);
+          }
+        }
+      }
+
+      function line(a, b) {
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+
+      function project(lat, lon) {
+        return {
+          x: ((lon + 126) / 61) * els.map.width,
+          y: ((50 - lat) / 27) * els.map.height,
+        };
+      }
+    </script>
+  </body>
+</html>

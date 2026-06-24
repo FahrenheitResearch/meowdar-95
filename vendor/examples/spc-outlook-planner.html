@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho SPC Outlook Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-items: end;
+        padding: 8px;
+      }
+
+      label {
+        display: grid;
+        gap: 2px;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        border-radius: 0;
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      button:active {
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      .content {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 420px;
+        gap: 8px;
+        min-height: 0;
+      }
+
+      .map-panel {
+        padding: 6px;
+        min-height: 0;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 680px);
+        min-height: 380px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      pre {
+        margin: 0;
+        height: calc(min(70vh, 680px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 8px;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      @media (max-width: 1050px) {
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 52vh;
+        }
+
+        pre {
+          height: 320px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho SPC Outlook Planner</div>
+        <div class="toolbar">
+          <label>
+            Mode
+            <select id="mode">
+              <option value="mock">Mock</option>
+              <option value="live">Live</option>
+              <option value="archive">Archive</option>
+            </select>
+          </label>
+          <label>
+            Day
+            <select id="day">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+            </select>
+          </label>
+          <label>
+            Kind
+            <select id="kind">
+              <option value="cat">Categorical</option>
+              <option value="torn">Tornado %</option>
+              <option value="wind">Wind %</option>
+              <option value="hail">Hail %</option>
+            </select>
+          </label>
+          <label>
+            Date
+            <input id="date" type="date" value="2026-06-13" />
+          </label>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window map-panel">
+          <canvas id="map" width="980" height="640"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status">ready</pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        fetchSpcOutlook,
+        parseSpcOutlook,
+        spcOutlookArchiveUrls,
+        spcOutlookFeatureCollection,
+        spcOutlookLiveUrls,
+      } from "../radar-toolbox.js";
+
+      const mockOutlook = `{"features":[{"properties":{"LABEL":"ENH","LABEL2":"Enhanced Risk","fill":"#FFA500","stroke":"#CC6600"},"geometry":{"type":"Polygon","coordinates":[[[-99.5,33.0],[-93.5,34.0],[-90.5,37.0],[-92.0,40.0],[-98.5,39.0],[-101.0,36.5],[-99.5,33.0]]]}},{"properties":{"LABEL":"SLGT","LABEL2":"Slight Risk","fill":"#FFE066","stroke":"#DDAA00"},"geometry":{"type":"MultiPolygon","coordinates":[[[[-103.0,31.5],[-91.0,31.5],[-86.5,36.5],[-91.0,43.0],[-104.0,41.5],[-107.0,36.5],[-103.0,31.5]]]]}},{"properties":{"LABEL":"MRGL","LABEL2":"Marginal Risk","fill":"#66CC66","stroke":"#228822"},"geometry":{"type":"Polygon","coordinates":[[[-109.0,30.0],[-84.0,29.0],[-79.0,35.0],[-87.0,46.0],[-111.0,44.0],[-114.0,36.0],[-109.0,30.0]]]}}]}`;
+
+      const els = {
+        mode: document.getElementById("mode"),
+        day: document.getElementById("day"),
+        kind: document.getElementById("kind"),
+        date: document.getElementById("date"),
+        plan: document.getElementById("plan"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+      };
+      const ctx = els.map.getContext("2d");
+      const bounds = { west: -125, east: -66, south: 24, north: 50 };
+
+      els.plan.addEventListener("click", plan);
+      plan();
+
+      async function plan() {
+        els.plan.disabled = true;
+        els.status.textContent = "planning";
+        try {
+          const day = Number(els.day.value);
+          const kind = els.kind.value;
+          const mode = els.mode.value;
+          const options = mode === "archive"
+            ? { archiveDate: els.date.value }
+            : { now: new Date().toISOString() };
+          const urls = mode === "archive"
+            ? spcOutlookArchiveUrls(els.date.value, day, kind)
+            : spcOutlookLiveUrls(day, kind, options);
+          const outlook = mode === "mock"
+            ? {
+              type: "spc-outlook-v1",
+              day,
+              kind,
+              archiveDate: null,
+              url: "mock://spc-outlook",
+              urls,
+              attemptedUrls: [],
+              missing: false,
+              features: parseSpcOutlook(mockOutlook, { kind, url: "mock://spc-outlook" }),
+            }
+            : await fetchSpcOutlook(day, kind, options);
+          draw(outlook);
+          els.status.textContent = JSON.stringify({
+            mode,
+            day,
+            kind,
+            archiveDate: outlook.archiveDate,
+            url: outlook.url,
+            missing: outlook.missing,
+            candidateUrls: outlook.urls,
+            attemptedUrls: outlook.attemptedUrls,
+            features: outlook.features.map((feature) => ({
+              label: feature.label,
+              label2: feature.label2,
+              rings: feature.rings.length,
+              fill: feature.fill,
+              stroke: feature.stroke,
+            })),
+          }, null, 2);
+        } catch (error) {
+          draw({ features: [] });
+          els.status.textContent = String(error?.stack || error);
+        } finally {
+          els.plan.disabled = false;
+        }
+      }
+
+      function draw(outlook) {
+        const ratio = Math.max(1, window.devicePixelRatio || 1);
+        const rect = els.map.getBoundingClientRect();
+        const width = Math.max(1, Math.round(rect.width * ratio));
+        const height = Math.max(1, Math.round(rect.height * ratio));
+        if (els.map.width !== width || els.map.height !== height) {
+          els.map.width = width;
+          els.map.height = height;
+        }
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, width, height);
+        drawBase(width, height);
+        const collection = spcOutlookFeatureCollection(outlook);
+        for (const feature of collection.features.toReversed()) drawFeature(feature, width, height);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `${12 * ratio}px "MS Sans Serif", Tahoma, sans-serif`;
+        ctx.fillText(`${outlook.features?.length || 0} SPC outlook features`, 12 * ratio, 20 * ratio);
+      }
+
+      function drawBase(width, height) {
+        ctx.fillStyle = "#152023";
+        ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = "rgba(255,255,255,0.11)";
+        ctx.lineWidth = Math.max(1, width / 980);
+        for (let lon = -125; lon <= -65; lon += 5) {
+          const p0 = project(lon, bounds.south, width, height);
+          const p1 = project(lon, bounds.north, width, height);
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.stroke();
+        }
+        for (let lat = 25; lat <= 50; lat += 5) {
+          const p0 = project(bounds.west, lat, width, height);
+          const p1 = project(bounds.east, lat, width, height);
+          ctx.beginPath();
+          ctx.moveTo(p0.x, p0.y);
+          ctx.lineTo(p1.x, p1.y);
+          ctx.stroke();
+        }
+        ctx.strokeStyle = "rgba(255,255,255,0.35)";
+        ctx.strokeRect(width * 0.04, height * 0.08, width * 0.9, height * 0.82);
+      }
+
+      function drawFeature(feature, width, height) {
+        const geometries = feature.geometry.type === "Polygon"
+          ? [feature.geometry.coordinates]
+          : feature.geometry.coordinates;
+        const fill = feature.properties.fill || "#808080";
+        const stroke = feature.properties.stroke || "#808080";
+        ctx.lineWidth = Math.max(2, width / 490);
+        for (const polygon of geometries) {
+          const ring = polygon[0] || [];
+          if (!ring.length) continue;
+          ctx.beginPath();
+          for (const [index, point] of ring.entries()) {
+            const p = project(point[0], point[1], width, height);
+            if (index === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+          }
+          ctx.closePath();
+          ctx.fillStyle = alphaColor(fill, 0.32);
+          ctx.strokeStyle = stroke;
+          ctx.fill();
+          ctx.stroke();
+          const labelPoint = project(ring[0][0], ring[0][1], width, height);
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#000000";
+          ctx.lineWidth = Math.max(3, width / 360);
+          ctx.font = `bold ${13 * Math.max(1, width / 980)}px "MS Sans Serif", Tahoma, sans-serif`;
+          ctx.strokeText(feature.properties.label || "", labelPoint.x + 6, labelPoint.y - 6);
+          ctx.fillText(feature.properties.label || "", labelPoint.x + 6, labelPoint.y - 6);
+        }
+      }
+
+      function project(lon, lat, width, height) {
+        const x = ((lon - bounds.west) / (bounds.east - bounds.west)) * width * 0.9 + width * 0.04;
+        const y = (1 - ((lat - bounds.south) / (bounds.north - bounds.south))) * height * 0.82 + height * 0.08;
+        return { x, y };
+      }
+
+      function alphaColor(hex, alpha) {
+        const value = String(hex || "#808080").replace(/^#/, "");
+        if (value.length !== 6) return `rgba(128,128,128,${alpha})`;
+        return `rgba(${parseInt(value.slice(0, 2), 16)},${parseInt(value.slice(2, 4), 16)},${parseInt(value.slice(4, 6), 16)},${alpha})`;
+      }
+    </script>
+  </body>
+</html>

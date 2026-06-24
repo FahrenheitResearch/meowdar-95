@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#008080">
+  <meta name="description" content="Meowdar is a client-rendered professional NEXRAD radar workstation with live low-sweep following, archives, palettes, and optional GLM lightning.">
+  <link rel="icon" href="data:,">
+  <title>Meowdar 95</title>
+  <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
+  <link rel="stylesheet" href="./styles.css?v=og-map-stable-1">
+    <script src="./config.js?v=native-ppi-3"></script>
+    <script type="module" src="./app.js?v=native-ppi-3"></script>
+</head>
+<body>
+  <a class="skip-link" href="#radarStage">Skip to radar</a>
+
+  <main class="desktop-shell" id="main-content">
+    <section class="app-window" aria-label="Meowdar professional radar workstation">
+      <header class="title-bar">
+        <div class="title-bar-text">
+          <span class="cat-icon" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path d="M2 6V2l3 2c1-.4 2-.6 3-.6s2 .2 3 .6l3-2v4c1 1 1 2 1 4 0 3-3 5-7 5s-7-2-7-5c0-2 0-3 1-4Z"/><path class="cat-face" d="M5 9h1v1H5zm5 0h1v1h-1zM7 11h2l-1 1z"/></svg>
+          </span>
+          <strong>Meowdar 95</strong>
+          <span class="title-detail">Professional Radar Workstation</span>
+        </div>
+        <div class="window-controls" aria-hidden="true"><button type="button">_</button><button type="button">□</button><button type="button">×</button></div>
+      </header>
+
+      <nav class="menu-bar" id="primaryNav" aria-label="Application menu">
+        <button type="button"><u>F</u>ile</button>
+        <button type="button"><u>V</u>iew</button>
+        <button type="button"><u>R</u>adar</button>
+        <button type="button" id="paletteButton"><u>C</u>olors</button>
+        <button type="button"><u>H</u>elp</button>
+      </nav>
+      <button id="navToggle" hidden type="button" aria-expanded="false">Menu</button>
+
+      <div class="tool-bar" aria-label="Radar shortcuts">
+        <button id="loadButton" class="tool-button primary-tool" type="button"><span class="button-label">Load radar</span><span class="button-spinner" aria-hidden="true"></span></button>
+        <button id="refreshButton" class="tool-button" type="button">↻ Refresh</button>
+        <button id="locationButton" class="tool-button" type="button">⌖ Nearest</button>
+        <button id="fitNetworkButton" class="tool-button" type="button">▣ Network</button>
+        <button id="centerRadarButton" class="tool-button" type="button">◎ Selected</button>
+        <span class="tool-separator" aria-hidden="true"></span>
+        <button id="resetButton" class="tool-button" type="button">Reset</button>
+        <span class="toolbar-spacer"></span>
+        <span class="toolbar-chip"><i class="live-dot" id="liveDot"></i><span id="engineBadge">No data</span></span>
+      </div>
+
+      <section class="workspace">
+        <aside class="control-column" aria-label="Radar controls">
+          <fieldset class="win-group station-group">
+            <legend>Radar site</legend>
+            <label class="win-field" for="siteSelect"><span>Station</span><select id="siteSelect"></select></label>
+            <div class="site-readout"><strong id="stationCode">KDAX</strong><span id="stationName">Sacramento radar</span></div>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Time source</legend>
+            <div class="classic-tabs" id="modeControl" role="group" aria-label="Radar time mode">
+              <button class="selected" type="button" data-mode="live" aria-pressed="true">Live</button>
+              <button type="button" data-mode="archive" aria-pressed="false">Archive</button>
+            </div>
+            <div class="archive-fields" id="archiveFields" hidden>
+              <label class="win-field" for="archiveDate"><span>Date</span><input id="archiveDate" type="date" min="1991-06-01"></label>
+              <label class="win-field" for="archiveTime"><span>UTC time</span><input id="archiveTime" type="time" value="18:00"></label>
+            </div>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Product</legend>
+            <div class="product-grid" id="productControl">
+              <button class="selected" type="button" data-product="REF" aria-pressed="true"><span class="product-chip ref"></span>Reflectivity</button>
+              <button type="button" data-product="DVEL" aria-pressed="false"><span class="product-chip vel"></span>Velocity</button>
+              <button type="button" data-product="CC" aria-pressed="false"><span class="product-chip cc"></span>Correlation</button>
+            </div>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Sweep control</legend>
+            <label class="check-row" title="Keep every loop frame on the best completed lowest elevation and follow new low sweeps as they finish."><input id="followLowToggle" type="checkbox" checked><span>Low-sweep loop / follow live</span></label>
+            <label class="win-field" for="lowTiltMaxSelect"><span>Low ceiling</span><select id="lowTiltMaxSelect"><option value="0.9">≤ 0.9°</option><option value="1.5">≤ 1.5°</option><option value="2.5" selected>≤ 2.5°</option></select></label>
+            <label class="win-field" for="tiltSelect"><span>Elevation</span><select id="tiltSelect"><option value="0">Lowest complete</option></select></label>
+            <label class="win-field" for="qualitySelect"><span>Tilt QC</span><select id="qualitySelect"><option value="auto" selected>Operational</option><option value="strict">Strict 720</option><option value="all">Raw cuts</option></select></label>
+            <div class="mini-status" id="scanQualitySummary">Operational · follow</div>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Loop</legend>
+            <label class="win-field" for="loopCountSelect"><span>Frames</span><select id="loopCountSelect">
+              <option value="1">1</option><option value="6">6</option><option value="12" selected>12</option><option value="24">24</option><option value="36">36</option><option value="48">48</option><option value="72">72</option><option value="96">96</option>
+            </select></label>
+            <label class="win-field" for="loopSpeedSelect"><span>Speed</span><select id="loopSpeedSelect"><option value="1200">Slow</option><option value="750" selected>Normal</option><option value="450">Fast</option><option value="260">Very fast</option></select></label>
+            <label class="win-field" for="endDwellSelect"><span>Last-frame dwell</span><select id="endDwellSelect"><option value="0">None</option><option value="600" selected>0.6 sec</option><option value="1200">1.2 sec</option><option value="2000">2.0 sec</option></select></label>
+            <div class="memory-meter"><span id="loopMemoryEstimate">~432 MiB raw pixel ceiling</span><i id="loopMemoryBar"></i></div>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Rendering</legend>
+            <div class="classic-tabs two" id="performanceControl" role="group" aria-label="Radar data mode">
+              <button class="selected" type="button" data-profile="full" aria-pressed="true"><strong>Full</strong><small>3072 px</small></button>
+              <button type="button" data-profile="low" aria-pressed="false"><strong>Low data</strong><small>512 px</small></button>
+            </div>
+            <div class="mini-status" id="profileNote">3072 px texture · nearest</div>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Overlays</legend>
+            <label class="check-row"><input id="lightningToggle" type="checkbox"><span>GOES GLM lightning</span></label>
+            <label class="win-field" for="lightningWindow"><span>Window</span><select id="lightningWindow"><option value="1">1 minute</option><option value="5" selected>5 minutes</option><option value="10">10 minutes</option></select></label>
+          </fieldset>
+
+          <fieldset class="win-group">
+            <legend>Color table</legend>
+            <button class="wide-button" id="openPaletteButton" type="button">Edit color table… <span class="palette-swatch" aria-hidden="true"></span><small id="paletteLabel">Operational</small></button>
+          </fieldset>
+        </aside>
+
+        <section class="display-column" aria-label="Radar display">
+          <div class="display-window">
+            <header class="window-caption"><span><b id="conditionHeadline">KDAX · Reflectivity</b> — <span id="conditionCopy">Sacramento</span></span><span id="frameTime">No radar loaded</span></header>
+            <div class="radar-stage" id="radarStage">
+              <div class="map-fallback" aria-hidden="true">
+                <svg viewBox="0 0 1000 680" preserveAspectRatio="none">
+                  <rect width="1000" height="680" fill="#071317"/>
+                  <path class="land" d="M84 84 153 67 236 87 306 61 385 83 464 67 548 84 621 55 700 76 767 57 847 84 909 127 925 208 900 270 926 337 898 407 920 475 875 553 793 599 692 611 604 636 506 618 406 641 307 610 222 619 138 575 95 503 114 431 82 359 107 286 80 216Z"/>
+                  <path class="state-line" d="M220 92v520M389 81v551M556 82v543M722 75v524M97 248h815M91 410h818"/>
+                  <g class="fallback-labels"><text x="178" y="165">WEST</text><text x="515" y="150">PLAINS</text><text x="815" y="178">EAST</text><text x="516" y="640">Loading OpenStreetMap</text></g>
+                </svg>
+              </div>
+              <div id="map" class="map-canvas" role="application" aria-label="Zoomable OpenStreetMap radar site map"></div>
+              <canvas id="radarCanvas" width="3072" height="3072" aria-label="Radar product"></canvas>
+              <canvas id="overlayCanvas" aria-hidden="true"></canvas>
+              <div id="lightningPreviewLayer" class="lightning-preview-layer" aria-hidden="true"></div>
+              <div id="siteMarkerLayer" class="site-marker-layer" aria-label="Radar sites"></div>
+
+              <div class="stage-status top-left"><span id="scanQualityPill">QC · No data</span><span id="lightningPill" hidden>GLM · Off</span></div>
+              <div class="stage-status top-right"><span id="rangePill">143 mi radius</span></div>
+              <span class="source-pill" id="sourcePill">No radar loaded</span>
+
+              <div class="reflectivity-legend" id="radarLegend" aria-label="Radar legend"><b class="legend-unit">dBZ</b><span class="legend-bar"></span><span class="legend-labels"><i>80</i><i>60</i><i>40</i><i>20</i><i>0</i></span></div>
+
+              <div class="background-progress" id="backgroundProgress" hidden><span></span><strong id="backgroundProgressText">Loading loop…</strong></div>
+              <div class="loading-layer" id="loadingLayer" hidden><span class="hourglass" aria-hidden="true">⌛</span><strong id="loadingTitle">Loading radar</strong><span id="loadingDetail">Fetching Level II data…</span></div>
+              <div class="empty-layer" id="emptyLayer" hidden><strong>Radar unavailable</strong><p>Check the upstream browser feed and try again.</p><button id="returnPreviewButton" type="button">Return to map</button></div>
+            </div>
+          </div>
+
+          <div class="transport-window" aria-label="Loop playback">
+            <div class="transport-buttons"><button id="previousButton" type="button" title="Previous frame">|◀</button><button id="playButton" type="button" title="Play or pause"><span class="play-icon">▶</span><span class="pause-icon">Ⅱ</span></button><button id="nextButton" type="button" title="Next frame">▶|</button></div>
+            <div class="timeline-wrap"><input id="timeline" type="range" min="0" max="0" value="0" step="1" disabled><div class="timeline-labels"><span id="timelineStart">--:--</span><b id="timelineCurrent">No data</b></div></div>
+          </div>
+        </section>
+
+        <aside class="inspector-column" aria-label="Scan inspector">
+          <fieldset class="win-group inspector-card"><legend>Current scan</legend>
+            <h2 id="conditionProduct">Reflectivity</h2>
+            <p id="conditionUpdated">No radar loaded</p>
+            <dl class="scan-grid">
+              <div><dt>Tilt</dt><dd id="conditionTilt">Lowest</dd></div>
+              <div><dt>Radials</dt><dd id="conditionRadials">No data</dd></div>
+              <div><dt>QC</dt><dd id="conditionQuality">No data</dd></div>
+              <div><dt>Lightning</dt><dd id="conditionLightning">Off</dd></div>
+            </dl>
+            <span id="conditionFrames" hidden>0 scans</span><span id="conditionProfile" hidden>Full resolution</span><span id="conditionMap" hidden>OpenStreetMap</span>
+          </fieldset>
+          <fieldset class="win-group keyboard-card"><legend>Keyboard</legend>
+            <div><kbd>Space</kbd><span>Play / pause</span></div><div><kbd>←</kbd><kbd>→</kbd><span>Step loop</span></div><div><kbd>R</kbd><span>Refresh</span></div><div><kbd>P</kbd><span>Palette</span></div>
+          </fieldset>
+          <fieldset class="win-group system-card"><legend>System</legend>
+            <div><b>Renderer</b><span>Native pixels</span></div><div><b>Basemap</b><span>OpenStreetMap</span></div><div><b>Archive</b><span>UTC</span></div>
+          </fieldset>
+        </aside>
+      </section>
+
+      <footer class="status-bar">
+        <span class="status-panel"><b>Ready</b></span>
+        <span class="status-panel">OpenStreetMap</span>
+        <span class="status-panel status-grow">Level II decode and rendering stay on this computer.</span>
+        <span class="status-panel" id="clockPanel">--:-- UTC</span>
+      </footer>
+    </section>
+  </main>
+
+  <dialog class="palette-dialog" id="paletteDialog" aria-labelledby="paletteTitle">
+    <form method="dialog" class="palette-dialog-shell">
+      <header class="title-bar"><div class="title-bar-text"><span class="cat-icon mini" aria-hidden="true">🎨</span><strong id="paletteTitle">Meowdar Color Table Editor</strong></div><div class="window-controls"><button class="dialog-close" id="closePaletteDialog" type="button" aria-label="Close palette editor">×</button></div></header>
+      <div class="dialog-body">
+        <div class="palette-toolbar"><label for="paletteSelect">Palette<select id="paletteSelect"></select></label><label for="paletteName">Name<input id="paletteName" type="text" maxlength="80"></label></div>
+        <div class="palette-preview" id="palettePreview" aria-label="Palette preview"></div>
+        <fieldset class="win-group palette-options"><legend>Filters</legend>
+          <label id="dbzFloorRow" for="paletteDbzFloor"><span>Reflectivity floor <output id="dbzFloorValue">-10 dBZ</output></span><input id="paletteDbzFloor" type="range" min="-32" max="30" step="1" value="-10"></label>
+          <label id="velocityDeadbandRow" for="paletteVelocityDeadband" hidden><span>Velocity deadband <output id="velocityDeadbandValue">±0 kt</output></span><input id="paletteVelocityDeadband" type="range" min="0" max="20" step="1" value="0"></label>
+          <label id="ccFloorRow" for="paletteCcFloor" hidden><span>CC floor <output id="ccFloorValue">0.20</output></span><input id="paletteCcFloor" type="range" min="0.20" max="0.99" step="0.01" value="0.20"></label>
+          <label for="rangeFoldMode"><span>Range folded</span><select id="rangeFoldMode"><option value="show">Palette value</option><option value="hide">Transparent</option><option value="custom">Custom color</option></select></label>
+          <label class="rf-color" for="rangeFoldColor"><span>RF color</span><input id="rangeFoldColor" type="color" value="#81218b"></label>
+        </fieldset>
+        <div class="palette-stop-heading"><strong>Stops</strong><span id="paletteStatus">Native units</span></div>
+        <div class="palette-stops" id="paletteStops"></div>
+        <div class="palette-actions secondary-actions"><button id="addPaletteStop" type="button">Add stop</button><button id="importPaletteButton" type="button">Import .pal</button><input id="paletteFile" type="file" accept=".pal,.txt,.json,text/plain,application/json" hidden><button id="exportPaletteButton" type="button">Export</button><button id="deletePaletteButton" type="button">Delete</button></div>
+        <button class="wide-button palette-apply" id="applyPaletteButton" type="button">Apply color table</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script>
+    const clock = document.getElementById('clockPanel');
+    const tickClock = () => { if (clock) clock.textContent = new Intl.DateTimeFormat('en-US', {hour:'2-digit', minute:'2-digit', hour12:false, timeZone:'UTC'}).format(new Date()) + ' UTC'; };
+    tickClock(); setInterval(tickClock, 30000);
+  </script>
+</body>
+</html>

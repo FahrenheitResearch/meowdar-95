@@ -1,0 +1,327 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Community Feed Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px;
+      }
+
+      select,
+      input,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      select {
+        min-width: 250px;
+      }
+
+      input {
+        width: 64px;
+      }
+
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 430px;
+        gap: 8px;
+      }
+
+      .map-panel {
+        padding: 6px;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 680px);
+        min-height: 400px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      aside {
+        padding: 8px;
+        min-width: 0;
+      }
+
+      pre {
+        margin: 0;
+        height: calc(min(70vh, 680px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 8px;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      @media (max-width: 900px) {
+        main {
+          padding: 6px;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 52vh;
+          min-height: 320px;
+        }
+
+        pre {
+          height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho Community GR2A Planner</div>
+        <div class="toolbar">
+          <select id="feed"></select>
+          <input id="count" type="number" min="1" max="12" value="4" />
+          <select id="mode">
+            <option value="mock">Mock listing</option>
+            <option value="live">Live CORS probe</option>
+          </select>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window map-panel">
+          <canvas id="map" width="980" height="640"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status"></pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        communityFeedFrameFromEntry,
+        communityRadarFeeds,
+        communityRadarMarkers,
+        fetchCommunityDirList,
+        recentCommunityFrames,
+      } from "../radar-toolbox.js?v=communityplanner1";
+
+      const feeds = communityRadarFeeds();
+      const markers = communityRadarMarkers();
+      const els = {
+        feed: document.getElementById("feed"),
+        count: document.getElementById("count"),
+        mode: document.getElementById("mode"),
+        plan: document.getElementById("plan"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+      };
+      const ctx = els.map.getContext("2d");
+      let selectedFeed = feeds[0];
+
+      for (const feed of feeds) {
+        const option = document.createElement("option");
+        option.value = feed.id;
+        option.textContent = `${feed.id} - ${feed.label}`;
+        els.feed.appendChild(option);
+      }
+
+      els.feed.addEventListener("change", () => {
+        selectedFeed = feeds.find((feed) => feed.id === els.feed.value) || feeds[0];
+        draw();
+      });
+      els.plan.addEventListener("click", planFeed);
+      els.map.addEventListener("click", pickMarker);
+      window.addEventListener("resize", resize);
+      resize();
+      planFeed();
+
+      async function planFeed() {
+        const count = Math.max(1, Math.min(12, Number(els.count.value) || 4));
+        const options = els.mode.value === "mock" ? { fetch: mockFetchFor(selectedFeed, count + 1) } : {};
+        els.status.textContent = "planning...";
+        draw();
+        try {
+          const plan = await fetchCommunityDirList(selectedFeed, options);
+          const frames = await recentCommunityFrames(selectedFeed, count, options);
+          const newest = frames[frames.length - 1] || communityFeedFrameFromEntry(selectedFeed, plan.newest, {
+            baseUrl: plan.baseUrl,
+            directoryUrl: plan.directoryUrl,
+            listingUrl: plan.listingUrl,
+          });
+          els.status.textContent = JSON.stringify({
+            feed: selectedFeed,
+            listingUrl: plan.listingUrl,
+            directoryUrl: plan.directoryUrl,
+            entries: plan.entries.length,
+            newest: {
+              identity: newest.identity,
+              cacheKey: newest.cacheKey,
+              url: newest.url,
+              volumeTime: newest.volumeTime,
+            },
+            loopFrames: frames.map((frame) => ({
+              id: frame.id,
+              identity: frame.identity,
+              cacheKey: frame.cacheKey,
+              url: frame.url,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error?.message || error);
+        }
+      }
+
+      function mockFetchFor(feed, count) {
+        const now = new Date("2026-06-13T00:00:00Z");
+        const lines = [];
+        for (let index = 0; index < count; index += 1) {
+          const at = new Date(now.getTime() + index * 10 * 60_000);
+          const stamp = at.toISOString().replace(/[-:]/g, "").slice(0, 15).replace("T", "_");
+          lines.push(`${1_200_000 + index * 1024} ${feed.id}${stamp}`);
+        }
+        lines.splice(1, 0, "latest.json", "grlevel2.cfg");
+        const text = `${lines.join("\n")}\n`;
+        return async (url) => ({
+          ok: url.endsWith("/dir.list"),
+          status: url.endsWith("/dir.list") ? 200 : 404,
+          statusText: url.endsWith("/dir.list") ? "OK" : "Not Found",
+          text: async () => text,
+        });
+      }
+
+      function resize() {
+        const rect = els.map.getBoundingClientRect();
+        els.map.width = Math.max(320, Math.round(rect.width));
+        els.map.height = Math.max(260, Math.round(rect.height));
+        draw();
+      }
+
+      function draw() {
+        const width = els.map.width;
+        const height = els.map.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#0d1518";
+        ctx.fillRect(0, 0, width, height);
+        drawGrid(width, height);
+        for (const marker of markers) {
+          const point = project(marker.lon, marker.lat, width, height);
+          const active = marker.feedIds.includes(selectedFeed.id);
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, active ? 8 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = active ? "#ffff00" : "#48dcd2";
+          ctx.fill();
+          ctx.strokeStyle = "#000000";
+          ctx.stroke();
+        }
+      }
+
+      function drawGrid(width, height) {
+        ctx.strokeStyle = "#243134";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += 80) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += 80) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+      }
+
+      function pickMarker(event) {
+        const rect = els.map.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * els.map.width;
+        const y = ((event.clientY - rect.top) / rect.height) * els.map.height;
+        let best = null;
+        for (const marker of markers) {
+          const point = project(marker.lon, marker.lat, els.map.width, els.map.height);
+          const distance = Math.hypot(point.x - x, point.y - y);
+          if (distance <= 18 && (!best || distance < best.distance)) best = { marker, distance };
+        }
+        if (!best) return;
+        const feedId = best.marker.feedIds[0];
+        els.feed.value = feedId;
+        selectedFeed = feeds.find((feed) => feed.id === feedId) || selectedFeed;
+        planFeed();
+      }
+
+      function project(lon, lat, width, height) {
+        const west = -105;
+        const east = -85;
+        const south = 25;
+        const north = 49;
+        return {
+          x: ((lon - west) / (east - west)) * width,
+          y: ((north - lat) / (north - south)) * height,
+        };
+      }
+    </script>
+  </body>
+</html>

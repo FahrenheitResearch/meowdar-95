@@ -1,0 +1,1408 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Dogfood Radar App</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --desktop: #008080;
+        --panel: #c0c0c0;
+        --panel-hi: #ffffff;
+        --panel-mid: #808080;
+        --panel-dark: #202020;
+        --title: #000080;
+        --title-inactive: #6f6f6f;
+        --ink: #050505;
+        --paper: #ffffff;
+        --screen: #030606;
+        --alert: #7f0000;
+        --ok: #004f23;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--desktop);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, Arial, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 324px minmax(0, 1fr) 360px;
+        gap: 8px;
+        padding: 8px;
+        align-items: start;
+      }
+
+      .window {
+        min-width: 0;
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--panel-hi) var(--panel-dark) var(--panel-dark) var(--panel-hi);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 3px 6px;
+        background: var(--title);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .titlebar small {
+        font: inherit;
+        font-weight: 400;
+      }
+
+      .body {
+        padding: 8px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 8px;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .grid-3 {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 6px;
+      }
+
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      label,
+      fieldset {
+        min-width: 0;
+      }
+
+      label {
+        display: grid;
+        gap: 3px;
+      }
+
+      fieldset {
+        margin: 0;
+        padding: 6px;
+        border: 2px solid;
+        border-color: var(--panel-mid) var(--panel-hi) var(--panel-hi) var(--panel-mid);
+      }
+
+      legend {
+        padding: 0 4px;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 26px;
+        min-width: 0;
+        border: 2px solid;
+        border-radius: 0;
+        border-color: var(--panel-hi) var(--panel-dark) var(--panel-dark) var(--panel-hi);
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      input,
+      select {
+        background: var(--paper);
+        border-color: var(--panel-dark) var(--panel-hi) var(--panel-hi) var(--panel-dark);
+      }
+
+      button {
+        padding: 2px 8px;
+        cursor: pointer;
+      }
+
+      button:active {
+        border-color: var(--panel-dark) var(--panel-hi) var(--panel-hi) var(--panel-dark);
+        padding: 3px 7px 1px 9px;
+      }
+
+      button:disabled,
+      select:disabled,
+      input:disabled {
+        color: #707070;
+        cursor: default;
+      }
+
+      .mode-row {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 4px;
+      }
+
+      .mode-row label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        min-height: 28px;
+        padding: 2px 4px;
+        border: 2px solid;
+        border-color: var(--panel-hi) var(--panel-dark) var(--panel-dark) var(--panel-hi);
+        background: var(--panel);
+      }
+
+      .mode-row input {
+        width: 13px;
+        min-height: 13px;
+      }
+
+      .site-map {
+        display: block;
+        width: 100%;
+        height: auto;
+        background: #d7e7e3;
+        border: 2px solid;
+        border-color: var(--panel-dark) var(--panel-hi) var(--panel-hi) var(--panel-dark);
+      }
+
+      .map-region {
+        fill: #bcd8d1;
+        stroke: #4a6f70;
+        stroke-width: 1;
+      }
+
+      .map-grid {
+        stroke: rgba(0, 0, 0, 0.14);
+        stroke-width: 1;
+      }
+
+      .site-dot {
+        fill: #101010;
+        stroke: #ffffff;
+        stroke-width: 1.2;
+        cursor: pointer;
+      }
+
+      .site-dot:hover,
+      .site-dot:focus {
+        fill: #ffff00;
+        stroke: #000000;
+      }
+
+      .site-dot.selected {
+        fill: #ff0000;
+        stroke: #ffffff;
+        stroke-width: 2;
+      }
+
+      .site-label {
+        fill: #202020;
+        font: 10px Tahoma, Arial, sans-serif;
+        pointer-events: none;
+      }
+
+      .site-list {
+        max-height: 102px;
+        overflow: auto;
+        display: grid;
+        gap: 3px;
+        padding: 3px;
+        background: var(--paper);
+        border: 2px solid;
+        border-color: var(--panel-dark) var(--panel-hi) var(--panel-hi) var(--panel-dark);
+      }
+
+      .site-list button {
+        width: 100%;
+        min-height: 23px;
+        text-align: left;
+        background: var(--paper);
+        border-width: 1px;
+        padding: 2px 4px;
+      }
+
+      .site-list button.selected {
+        background: var(--title);
+        color: #ffffff;
+      }
+
+      .display-window {
+        min-height: calc(100vh - 16px);
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+      }
+
+      .radar-scroll {
+        min-height: 0;
+        overflow: auto;
+        padding: 6px;
+        background: #7a7a7a;
+        border-top: 2px solid var(--panel-dark);
+        border-bottom: 2px solid var(--panel-hi);
+      }
+
+      canvas {
+        display: block;
+        width: auto;
+        height: auto;
+        max-width: none;
+        max-height: none;
+        background: var(--screen);
+        border: 2px solid;
+        border-color: var(--panel-dark) var(--panel-hi) var(--panel-hi) var(--panel-dark);
+        image-rendering: pixelated;
+      }
+
+      .timeline {
+        margin: 0;
+        padding: 6px;
+        max-height: 160px;
+        overflow: auto;
+        list-style: none;
+        background: var(--panel);
+      }
+
+      .timeline li {
+        margin: 0 0 3px;
+      }
+
+      .timeline button {
+        width: 100%;
+        min-height: 24px;
+        display: grid;
+        grid-template-columns: 34px minmax(0, 1fr) 72px;
+        gap: 6px;
+        align-items: center;
+        text-align: left;
+        background: var(--paper);
+        border-width: 1px;
+      }
+
+      .timeline button.current {
+        background: var(--title);
+        color: #ffffff;
+      }
+
+      .timeline .stamp {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .readout {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(0, 1fr));
+        gap: 4px;
+        padding: 6px;
+        border-top: 2px solid var(--panel-hi);
+      }
+
+      .readout span {
+        min-height: 22px;
+        padding: 3px 5px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--panel-mid) var(--panel-hi) var(--panel-hi) var(--panel-mid);
+      }
+
+      pre {
+        margin: 0;
+        min-height: 120px;
+        max-height: 34vh;
+        overflow: auto;
+        padding: 8px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: var(--paper);
+        color: var(--ink);
+        border: 2px solid;
+        border-color: var(--panel-dark) var(--panel-hi) var(--panel-hi) var(--panel-dark);
+      }
+
+      .error {
+        color: var(--alert);
+      }
+
+      .ok {
+        color: var(--ok);
+      }
+
+      .status-window {
+        display: grid;
+        gap: 8px;
+      }
+
+      @media (max-width: 1260px) {
+        main {
+          grid-template-columns: 324px minmax(0, 1fr);
+        }
+
+        .status-window {
+          grid-column: 1 / -1;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 860px) {
+        main {
+          grid-template-columns: 1fr;
+          padding: 6px;
+        }
+
+        .display-window {
+          min-height: auto;
+        }
+
+        .status-window {
+          grid-template-columns: 1fr;
+        }
+
+        .readout {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">
+          <span>Radar Control</span>
+          <small id="workerVersion"></small>
+        </div>
+        <div class="body stack">
+          <fieldset>
+            <legend>Mode</legend>
+            <div class="mode-row">
+              <label><input type="radio" name="mode" value="live" checked />Live</label>
+              <label><input type="radio" name="mode" value="recent" />Recent</label>
+              <label><input type="radio" name="mode" value="archive" />Archive</label>
+            </div>
+          </fieldset>
+
+          <label>
+            Radar site
+            <select id="site"></select>
+          </label>
+          <input id="siteSearch" type="search" placeholder="filter sites" autocomplete="off" />
+          <svg id="siteMap" class="site-map" viewBox="0 0 620 360" role="img" aria-label="NEXRAD site picker"></svg>
+          <div id="siteMatches" class="site-list" aria-label="Site matches"></div>
+
+          <div class="grid-2">
+            <label>
+              Date UTC
+              <input id="archiveDate" type="date" />
+            </label>
+            <label>
+              Target UTC
+              <input id="archiveTime" type="time" step="60" />
+            </label>
+          </div>
+
+          <div class="grid-3">
+            <label>
+              Frames
+              <input id="frameCount" type="number" min="1" max="20" value="1" />
+            </label>
+            <label>
+              Render px
+              <select id="renderSize">
+                <option value="512">512</option>
+                <option value="768" selected>768</option>
+                <option value="1024">1024</option>
+              </select>
+            </label>
+            <label>
+              Range km
+              <input id="rangeKm" type="number" min="40" max="460" step="10" value="230" />
+            </label>
+          </div>
+
+          <div class="grid-2">
+            <label>
+              Product
+              <select id="product"></select>
+            </label>
+            <label>
+              Tilt
+              <select id="cut" disabled>
+                <option>load loop first</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="grid-2">
+            <label>
+              Storm dir
+              <input id="stormDir" type="number" min="0" max="359" step="5" value="240" />
+            </label>
+            <label>
+              Storm kt
+              <input id="stormSpeed" type="number" min="0" max="120" step="5" value="35" />
+            </label>
+          </div>
+
+          <button id="load">Load loop</button>
+          <div class="grid-3">
+            <button id="prev" disabled title="Previous frame">&lt;&lt;</button>
+            <button id="play" disabled title="Play or pause">Play</button>
+            <button id="next" disabled title="Next frame">&gt;&gt;</button>
+          </div>
+          <div class="grid-2">
+            <button id="poll" disabled>Poll live</button>
+            <button id="warm" disabled>Warm cache</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="window display-window">
+        <div class="titlebar">
+          <span id="displayTitle">BowEcho Dogfood Radar App</span>
+          <small id="displayMode">idle</small>
+        </div>
+        <div class="radar-scroll">
+          <canvas id="radar" width="768" height="768"></canvas>
+        </div>
+        <ol id="timeline" class="timeline"></ol>
+        <div class="readout">
+          <span id="readoutSite">site -</span>
+          <span id="readoutProduct">product -</span>
+          <span id="readoutFrame">frame -</span>
+          <span id="readoutCanvas">canvas 768x768</span>
+          <span id="readoutPixels">pixels -</span>
+        </div>
+      </section>
+
+      <aside class="status-window">
+        <section class="window">
+          <div class="titlebar">
+            <span>Status</span>
+            <small id="statusFlag">ready</small>
+          </div>
+          <div class="body">
+            <pre id="status">ready</pre>
+          </div>
+        </section>
+
+        <section class="window">
+          <div class="titlebar">
+            <span>Capabilities</span>
+            <small id="capabilityCount">0 products</small>
+          </div>
+          <div class="body">
+            <pre id="capabilities">load a loop to inspect product and tilt hints</pre>
+          </div>
+        </section>
+
+        <section class="window">
+          <div class="titlebar">
+            <span>SPC Planner</span>
+            <small id="spcCount">idle</small>
+          </div>
+          <div class="body stack">
+            <div class="grid-3">
+              <label>
+                Day
+                <select id="spcDay">
+                  <option value="1">Day 1</option>
+                  <option value="2">Day 2</option>
+                  <option value="3">Day 3</option>
+                </select>
+              </label>
+              <label>
+                Kind
+                <select id="spcKind"></select>
+              </label>
+              <label>
+                Date
+                <input id="spcDate" type="date" />
+              </label>
+            </div>
+            <button id="spcPlan">Plan outlook URLs</button>
+            <pre id="spcOutput">ready</pre>
+          </div>
+        </section>
+
+        <section class="window">
+          <div class="titlebar inactive-title">
+            <span>Errors</span>
+            <small id="errorFlag">clear</small>
+          </div>
+          <div class="body">
+            <pre id="errors" class="error">none</pre>
+          </div>
+        </section>
+      </aside>
+    </main>
+
+    <script type="module">
+      import {
+        PRODUCT_CATALOG,
+        WORKER_VERSION,
+        createRadarSession,
+        createRadarToolbox,
+        drawFrameToCanvas,
+        globalRadarSitesGeoJson,
+        spcOutlookKinds,
+        spcOutlookUrls,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const session = createRadarSession(toolbox, {
+        site: "KTLX",
+        mode: "live",
+        product: "REF",
+        frameCount: 6,
+        width: 768,
+        height: 768,
+        rangeKm: 230,
+        stormDirDeg: 240,
+        stormSpeedKt: 35,
+        loopSpeedPercent: 130,
+      });
+
+      const els = {
+        workerVersion: document.getElementById("workerVersion"),
+        mode: Array.from(document.querySelectorAll("input[name='mode']")),
+        site: document.getElementById("site"),
+        siteSearch: document.getElementById("siteSearch"),
+        siteMap: document.getElementById("siteMap"),
+        siteMatches: document.getElementById("siteMatches"),
+        archiveDate: document.getElementById("archiveDate"),
+        archiveTime: document.getElementById("archiveTime"),
+        frameCount: document.getElementById("frameCount"),
+        renderSize: document.getElementById("renderSize"),
+        rangeKm: document.getElementById("rangeKm"),
+        product: document.getElementById("product"),
+        cut: document.getElementById("cut"),
+        stormDir: document.getElementById("stormDir"),
+        stormSpeed: document.getElementById("stormSpeed"),
+        load: document.getElementById("load"),
+        prev: document.getElementById("prev"),
+        play: document.getElementById("play"),
+        next: document.getElementById("next"),
+        poll: document.getElementById("poll"),
+        warm: document.getElementById("warm"),
+        radar: document.getElementById("radar"),
+        displayTitle: document.getElementById("displayTitle"),
+        displayMode: document.getElementById("displayMode"),
+        timeline: document.getElementById("timeline"),
+        readoutSite: document.getElementById("readoutSite"),
+        readoutProduct: document.getElementById("readoutProduct"),
+        readoutFrame: document.getElementById("readoutFrame"),
+        readoutCanvas: document.getElementById("readoutCanvas"),
+        readoutPixels: document.getElementById("readoutPixels"),
+        status: document.getElementById("status"),
+        statusFlag: document.getElementById("statusFlag"),
+        capabilities: document.getElementById("capabilities"),
+        capabilityCount: document.getElementById("capabilityCount"),
+        spcDay: document.getElementById("spcDay"),
+        spcKind: document.getElementById("spcKind"),
+        spcDate: document.getElementById("spcDate"),
+        spcPlan: document.getElementById("spcPlan"),
+        spcOutput: document.getElementById("spcOutput"),
+        spcCount: document.getElementById("spcCount"),
+        errors: document.getElementById("errors"),
+        errorFlag: document.getElementById("errorFlag"),
+      };
+
+      const siteFeatureCollection = globalRadarSitesGeoJson({
+        source: "nexrad",
+        includeProfilers: false,
+      });
+      const siteFeatures = siteFeatureCollection.features
+        .filter((feature) => feature?.properties?.id)
+        .sort((left, right) => left.properties.id.localeCompare(right.properties.id));
+      const siteById = new Map(siteFeatures.map((feature) => [feature.properties.id, feature]));
+      const regions = [
+        { id: "CONUS", label: "CONUS", x: 18, y: 18, width: 472, height: 238, west: -126, east: -66, south: 24, north: 50 },
+        { id: "AK", label: "Alaska", x: 18, y: 280, width: 170, height: 58, west: -171, east: -129, south: 51, north: 72 },
+        { id: "HI", label: "Hawaii", x: 212, y: 280, width: 96, height: 58, west: -161, east: -154, south: 18, north: 23 },
+        { id: "PR", label: "Puerto Rico", x: 332, y: 280, width: 112, height: 58, west: -68.8, east: -64.2, south: 17.4, north: 18.8 },
+        { id: "GU", label: "Guam", x: 468, y: 280, width: 112, height: 58, west: 143.5, east: 146.5, south: 12, north: 15 },
+      ];
+
+      let activeSource = "session";
+      let archiveLoop = null;
+      let archiveIndex = 0;
+      let lastSnapshot = session.snapshot();
+      let lastWarmResult = null;
+      let playbackTimer = null;
+      let busy = false;
+
+      window.__dogfood = {
+        toolbox,
+        session,
+        get activeSource() {
+          return activeSource;
+        },
+        get loop() {
+          return currentLoop();
+        },
+        get frame() {
+          return currentFrame();
+        },
+        pixelStats() {
+          return renderedPixelStats(currentFrame());
+        },
+      };
+
+      els.workerVersion.textContent = WORKER_VERSION;
+      initializeDates();
+      populateSites();
+      populateProducts();
+      populateSpcKinds();
+      drawSiteMap();
+      renderSiteMatches();
+      updateArchiveControls();
+      drawPlaceholder("Live mode ready", "Pick any NEXRAD site and load a loop");
+      renderStatus("ready", {
+        siteCount: siteFeatures.length,
+        selectedSite: els.site.value,
+        mode: selectedMode(),
+        note: "Live frames render exactly as returned. If a site has no current echoes, the pixel stats will call out an empty live frame instead of silently looking broken.",
+      });
+
+      session.subscribe((snapshot) => {
+        lastSnapshot = snapshot;
+        if (activeSource !== "session") return;
+        if (snapshot.error) showError(snapshot.error);
+        setBusy(["loading", "rerendering", "warming", "polling"].includes(snapshot.status), snapshot.status);
+        if (snapshot.loaded) {
+          drawCurrent();
+          updateProductsFromHints(snapshot.capabilities);
+          updateCutsFromChoices(snapshot.cuts, snapshot.cut);
+          renderTimeline(snapshot.timeline, snapshot.index);
+          renderCapabilities(snapshot.capabilities);
+        } else {
+          updateButtons();
+          renderStatus(snapshot.status, sessionStatusPayload(snapshot));
+        }
+      });
+
+      els.mode.forEach((input) => input.addEventListener("change", updateArchiveControls));
+      els.site.addEventListener("change", () => selectSite(els.site.value));
+      els.siteSearch.addEventListener("input", renderSiteMatches);
+      els.siteMap.addEventListener("click", onSiteMapClick);
+      els.siteMatches.addEventListener("click", onSiteListClick);
+      els.load.addEventListener("click", loadSelectedLoop);
+      els.product.addEventListener("change", changeProduct);
+      els.cut.addEventListener("change", changeCut);
+      els.prev.addEventListener("click", previousFrame);
+      els.next.addEventListener("click", nextFrame);
+      els.play.addEventListener("click", togglePlayback);
+      els.poll.addEventListener("click", pollLive);
+      els.warm.addEventListener("click", warmCache);
+      els.timeline.addEventListener("click", onTimelineClick);
+      els.archiveDate.addEventListener("change", syncSpcDateFromArchive);
+      els.spcPlan.addEventListener("click", planSpcOutlook);
+
+      function initializeDates() {
+        els.archiveDate.value = "2013-05-20";
+        els.archiveTime.value = "20:56";
+        els.spcDate.value = els.archiveDate.value;
+      }
+
+      function populateSites() {
+        els.site.replaceChildren();
+        for (const feature of siteFeatures) {
+          const props = feature.properties;
+          const option = new Option(`${props.id} ${props.name || props.label}`, props.id);
+          option.selected = props.id === "KTLX";
+          els.site.add(option);
+        }
+      }
+
+      function populateProducts() {
+        els.product.replaceChildren();
+        for (const product of PRODUCT_CATALOG) {
+          els.product.add(new Option(`${product.label} ${product.name}`, product.id, product.id === "REF", product.id === "REF"));
+        }
+      }
+
+      function populateSpcKinds() {
+        els.spcKind.replaceChildren();
+        for (const kind of spcOutlookKinds()) {
+          els.spcKind.add(new Option(kind.label || kind.id, kind.id));
+        }
+      }
+
+      function drawSiteMap() {
+        const ns = "http://www.w3.org/2000/svg";
+        els.siteMap.replaceChildren();
+        for (const region of regions) {
+          const rect = document.createElementNS(ns, "rect");
+          rect.setAttribute("x", region.x);
+          rect.setAttribute("y", region.y);
+          rect.setAttribute("width", region.width);
+          rect.setAttribute("height", region.height);
+          rect.setAttribute("class", "map-region");
+          els.siteMap.appendChild(rect);
+
+          for (let step = 1; step < 4; step += 1) {
+            const x = region.x + (region.width * step) / 4;
+            const line = document.createElementNS(ns, "line");
+            line.setAttribute("x1", x);
+            line.setAttribute("y1", region.y);
+            line.setAttribute("x2", x);
+            line.setAttribute("y2", region.y + region.height);
+            line.setAttribute("class", "map-grid");
+            els.siteMap.appendChild(line);
+          }
+
+          const label = document.createElementNS(ns, "text");
+          label.setAttribute("x", region.x + 5);
+          label.setAttribute("y", region.y + 13);
+          label.setAttribute("class", "site-label");
+          label.textContent = region.label;
+          els.siteMap.appendChild(label);
+        }
+
+        for (const feature of siteFeatures) {
+          const point = projectFeature(feature);
+          if (!point) continue;
+          const circle = document.createElementNS(ns, "circle");
+          circle.setAttribute("cx", point.x.toFixed(1));
+          circle.setAttribute("cy", point.y.toFixed(1));
+          circle.setAttribute("r", point.region === "CONUS" ? "3.1" : "3.4");
+          circle.setAttribute("class", `site-dot${feature.properties.id === els.site.value ? " selected" : ""}`);
+          circle.setAttribute("data-site", feature.properties.id);
+          circle.setAttribute("tabindex", "0");
+          circle.setAttribute("role", "button");
+          circle.setAttribute("aria-label", `${feature.properties.id} ${feature.properties.name || feature.properties.label}`);
+          circle.appendChild(document.createElementNS(ns, "title")).textContent = `${feature.properties.id} ${feature.properties.name || feature.properties.label}`;
+          els.siteMap.appendChild(circle);
+        }
+      }
+
+      function projectFeature(feature) {
+        const [lon, lat] = feature.geometry.coordinates;
+        const region = regions.find((candidate) =>
+          lon >= candidate.west && lon <= candidate.east && lat >= candidate.south && lat <= candidate.north
+        );
+        if (!region) return null;
+        const x = region.x + ((lon - region.west) / (region.east - region.west)) * region.width;
+        const y = region.y + ((region.north - lat) / (region.north - region.south)) * region.height;
+        return { x, y, region: region.id };
+      }
+
+      function renderSiteMatches() {
+        const query = els.siteSearch.value.trim().toUpperCase();
+        const matches = siteFeatures
+          .filter((feature) => {
+            const text = `${feature.properties.id} ${feature.properties.name || ""} ${feature.properties.label || ""}`.toUpperCase();
+            return !query || text.includes(query);
+          })
+          .slice(0, 24);
+        els.siteMatches.replaceChildren();
+        for (const feature of matches) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.site = feature.properties.id;
+          button.textContent = `${feature.properties.id} ${feature.properties.name || feature.properties.label}`;
+          if (feature.properties.id === els.site.value) button.classList.add("selected");
+          els.siteMatches.appendChild(button);
+        }
+      }
+
+      function onSiteMapClick(event) {
+        const target = event.target.closest("[data-site]");
+        if (!target) return;
+        selectSite(target.dataset.site);
+      }
+
+      function onSiteListClick(event) {
+        const target = event.target.closest("[data-site]");
+        if (!target) return;
+        selectSite(target.dataset.site);
+      }
+
+      function selectSite(siteId) {
+        if (!siteById.has(siteId)) return;
+        els.site.value = siteId;
+        drawSiteMap();
+        renderSiteMatches();
+        const feature = siteById.get(siteId);
+        renderStatus("selected", {
+          site: siteId,
+          name: feature.properties.name || feature.properties.label,
+          mode: selectedMode(),
+        });
+      }
+
+      function selectedMode() {
+        return els.mode.find((input) => input.checked)?.value || "live";
+      }
+
+      function updateArchiveControls() {
+        const archive = selectedMode() === "archive";
+        els.archiveDate.disabled = !archive;
+        els.archiveTime.disabled = !archive;
+        els.poll.disabled = archive || !currentLoop();
+        els.displayMode.textContent = selectedMode();
+        if (archive) syncSpcDateFromArchive();
+      }
+
+      function syncSpcDateFromArchive() {
+        if (els.archiveDate.value) els.spcDate.value = els.archiveDate.value;
+      }
+
+      async function loadSelectedLoop() {
+        stopPlayback();
+        clearError();
+        const mode = selectedMode();
+        const options = renderOptions();
+        if (mode === "archive") {
+          await loadArchiveLoop(options);
+        } else {
+          activeSource = "session";
+          archiveLoop = null;
+          await runTask("loading", async () => {
+            await session.load({ ...options, mode });
+          });
+        }
+      }
+
+      async function loadArchiveLoop(options) {
+        activeSource = "archive";
+        await runTask("loading archive", async () => {
+          archiveLoop = await toolbox.loadArchiveLoop(els.site.value, els.archiveDate.value, {
+            ...options,
+            mode: "archive",
+            targetTime: archiveTargetTime(),
+          });
+          archiveIndex = Math.max(0, archiveLoop.length - 1);
+          updateProductsFromHints(currentHints());
+          updateCutsFromChoices(toolbox.cutChoices(archiveLoop, { selectedCut: archiveLoop.cut, displayableOnly: false }), archiveLoop.cut);
+          drawCurrent();
+          renderCapabilities(currentHints());
+        });
+      }
+
+      async function changeProduct() {
+        if (!currentLoop()) {
+          renderStatus("pending product", { product: els.product.value });
+          return;
+        }
+        clearError();
+        stopPlayback();
+        await runTask("rerendering", async () => {
+          if (activeSource === "session") {
+            await session.setProduct(els.product.value);
+          } else {
+            archiveLoop = await toolbox.rerenderLoop(archiveLoop, { product: els.product.value });
+            archiveIndex = Math.min(archiveIndex, archiveLoop.length - 1);
+            updateProductsFromHints(currentHints());
+            updateCutsFromChoices(toolbox.cutChoices(archiveLoop, { selectedCut: archiveLoop.cut, displayableOnly: false }), archiveLoop.cut);
+            drawCurrent();
+            renderCapabilities(currentHints());
+          }
+        });
+      }
+
+      async function changeCut() {
+        if (!currentLoop()) return;
+        clearError();
+        stopPlayback();
+        const cut = Number(els.cut.value);
+        await runTask("rerendering", async () => {
+          if (activeSource === "session") {
+            await session.setCut(cut);
+          } else {
+            archiveLoop = await toolbox.rerenderLoop(archiveLoop, { cut });
+            archiveIndex = Math.min(archiveIndex, archiveLoop.length - 1);
+            drawCurrent();
+            renderCapabilities(currentHints());
+          }
+        });
+      }
+
+      async function pollLive() {
+        if (activeSource !== "session" || selectedMode() !== "live") return;
+        clearError();
+        stopPlayback();
+        await runTask("polling", async () => {
+          await session.poll(renderOptions());
+        });
+      }
+
+      async function warmCache() {
+        const loop = currentLoop();
+        if (!loop) return;
+        clearError();
+        stopPlayback();
+        const hints = currentHints();
+        const products = hints?.recommendedWarmProducts?.length
+          ? hints.recommendedWarmProducts
+          : [els.product.value];
+        await runTask("warming", async () => {
+          if (activeSource === "session") {
+            lastWarmResult = await session.warm(products, { metadata: true, concurrency: 4 });
+          } else {
+            const entries = [];
+            for (const product of products) {
+              const result = await toolbox.warmLoop(archiveLoop, { product, metadata: true, concurrency: 4 });
+              entries.push({ product, result });
+            }
+            lastWarmResult = {
+              type: "dogfood-archive-warm-v1",
+              products: entries,
+              warmed: entries.reduce((sum, entry) => sum + Number(entry.result?.warmed || 0), 0),
+              failed: entries.reduce((sum, entry) => sum + Number(entry.result?.failed || 0), 0),
+              stats: entries[entries.length - 1]?.result?.stats || null,
+            };
+          }
+          renderStatus("warm complete", {
+            products,
+            warmed: lastWarmResult.warmed,
+            failed: lastWarmResult.failed,
+            stats: lastWarmResult.stats,
+          });
+        });
+      }
+
+      function previousFrame() {
+        stopPlayback();
+        if (activeSource === "session") {
+          session.previousFrame();
+        } else if (archiveLoop?.length) {
+          archiveIndex = archiveIndex <= 0 ? archiveLoop.length - 1 : archiveIndex - 1;
+          drawCurrent();
+        }
+      }
+
+      function nextFrame() {
+        if (activeSource === "session") {
+          session.nextFrame({ wrap: true });
+        } else if (archiveLoop?.length) {
+          archiveIndex = (archiveIndex + 1) % archiveLoop.length;
+          drawCurrent();
+        }
+      }
+
+      function togglePlayback() {
+        if (playbackTimer) {
+          stopPlayback();
+          return;
+        }
+        if (!currentLoop()) return;
+        playbackTimer = setInterval(nextFrame, 140);
+        els.play.textContent = "Stop";
+      }
+
+      function stopPlayback() {
+        if (playbackTimer) clearInterval(playbackTimer);
+        playbackTimer = null;
+        els.play.textContent = "Play";
+      }
+
+      function onTimelineClick(event) {
+        const button = event.target.closest("[data-index]");
+        if (!button) return;
+        stopPlayback();
+        const index = Number(button.dataset.index);
+        if (activeSource === "session") {
+          session.setIndex(index);
+        } else if (archiveLoop?.length) {
+          archiveIndex = Math.max(0, Math.min(archiveLoop.length - 1, index));
+          drawCurrent();
+        }
+      }
+
+      function drawCurrent() {
+        const loop = currentLoop();
+        const frame = currentFrame();
+        if (!loop || !frame) {
+          updateButtons();
+          return;
+        }
+        drawFrameToCanvas(els.radar, frame);
+        const summary = frameSummary(frame);
+        const emptyLiveFrame = isEmptyLiveFrame(loop, summary.pixelStats);
+        const index = activeSource === "session" ? session.index : archiveIndex;
+        const timeline = activeSource === "session"
+          ? lastSnapshot.timeline
+          : toolbox.loopTimeline(archiveLoop, { currentIndex: archiveIndex });
+        renderTimeline(timeline, index);
+        updateButtons();
+        els.displayTitle.textContent = `${loop.site} ${loop.product} cut ${loop.cut}`;
+        els.displayMode.textContent = emptyLiveFrame ? "live empty" : loop.mode;
+        els.readoutSite.textContent = `${loop.site} ${siteById.get(loop.site)?.properties?.name || ""}`.trim();
+        els.readoutProduct.textContent = `${loop.product} cut ${loop.cut}`;
+        els.readoutFrame.textContent = `${index + 1}/${loop.length} ${frame.frame.volumeTime || frame.frame.id || ""}`;
+        els.readoutCanvas.textContent = `canvas ${els.radar.width}x${els.radar.height}`;
+        els.readoutPixels.textContent = formatPixelStats(summary.pixelStats, emptyLiveFrame);
+        renderStatus(emptyLiveFrame ? "empty live frame" : "ready", {
+          source: activeSource,
+          mode: loop.mode,
+          site: loop.site,
+          product: loop.product,
+          cut: loop.cut,
+          index,
+          length: loop.length,
+          frame: summary,
+          canvas: canvasSummary(),
+          note: emptyLiveFrame
+            ? "The live Level II frame decoded and rendered, but the sampled RGBA buffer is basically black. That usually means this radar/site/product has no current returned echoes, not that the renderer failed."
+            : null,
+        });
+      }
+
+      function drawPlaceholder(title, subtitle) {
+        const canvas = els.radar;
+        const width = Math.max(1, canvas.width || 768);
+        const height = Math.max(1, canvas.height || 768);
+        const context = canvas.getContext("2d");
+        context.save();
+        context.fillStyle = "#020606";
+        context.fillRect(0, 0, width, height);
+        context.strokeStyle = "#00a0a0";
+        context.lineWidth = 1;
+        context.globalAlpha = 0.55;
+        for (let radius = 80; radius < Math.min(width, height) / 2; radius += 80) {
+          context.beginPath();
+          context.arc(width / 2, height / 2, radius, 0, Math.PI * 2);
+          context.stroke();
+        }
+        context.beginPath();
+        context.moveTo(width / 2, 0);
+        context.lineTo(width / 2, height);
+        context.moveTo(0, height / 2);
+        context.lineTo(width, height / 2);
+        context.stroke();
+        context.globalAlpha = 1;
+        context.fillStyle = "#c0c0c0";
+        context.font = "700 18px Tahoma, Arial, sans-serif";
+        context.textAlign = "center";
+        context.fillText(title, width / 2, height / 2 - 8);
+        context.font = "13px Tahoma, Arial, sans-serif";
+        context.fillText(subtitle, width / 2, height / 2 + 18);
+        context.restore();
+      }
+
+      function currentLoop() {
+        return activeSource === "session" ? session.loop : archiveLoop;
+      }
+
+      function currentFrame() {
+        if (activeSource === "session") return session.currentFrame();
+        return archiveLoop?.frame(archiveIndex) || null;
+      }
+
+      function currentHints() {
+        const loop = currentLoop();
+        if (!loop) return null;
+        return toolbox.capabilityHints(loop, {
+          site: loop.site,
+          selectedProduct: loop.product,
+          selectedCut: loop.cut,
+          displayableOnly: false,
+        });
+      }
+
+      function updateProductsFromHints(hints) {
+        if (!hints?.products?.length) return;
+        const previous = els.product.value;
+        els.product.replaceChildren();
+        for (const product of hints.products) {
+          const label = product.available
+            ? `${product.label} ${product.name}`
+            : `${product.label} unavailable`;
+          const option = new Option(label, product.id, product.id === previous, product.id === previous);
+          option.disabled = !product.available && product.id !== previous;
+          option.title = product.reason || "";
+          els.product.add(option);
+        }
+        const selected = hints.selectedProduct || previous;
+        if (Array.from(els.product.options).some((option) => option.value === selected)) {
+          els.product.value = selected;
+        }
+      }
+
+      function updateCutsFromChoices(cuts, selectedCut) {
+        els.cut.replaceChildren();
+        if (!cuts?.length) {
+          els.cut.disabled = true;
+          els.cut.add(new Option("no cuts loaded", ""));
+          return;
+        }
+        els.cut.disabled = false;
+        for (const cut of cuts) {
+          const moments = cut.moments?.length ? ` ${cut.moments.join("/")}` : "";
+          const option = new Option(`${cut.label}${moments}`, String(cut.index), cut.index === selectedCut, cut.index === selectedCut);
+          option.title = `products: ${(cut.products || []).join(", ")}`;
+          els.cut.add(option);
+        }
+        if (Number.isInteger(Number(selectedCut))) els.cut.value = String(selectedCut);
+      }
+
+      function renderTimeline(timeline, currentIndex) {
+        els.timeline.replaceChildren();
+        if (!timeline?.length) {
+          const item = document.createElement("li");
+          item.textContent = "no frames loaded";
+          els.timeline.appendChild(item);
+          return;
+        }
+        for (const entry of timeline) {
+          const item = document.createElement("li");
+          const button = document.createElement("button");
+          button.type = "button";
+          button.dataset.index = entry.index;
+          if (entry.index === currentIndex || entry.current) button.classList.add("current");
+
+          const ordinal = document.createElement("span");
+          ordinal.textContent = String(entry.index + 1).padStart(2, "0");
+          const stamp = document.createElement("span");
+          stamp.className = "stamp";
+          stamp.textContent = entry.volumeTime || entry.id || "unknown";
+          const meta = document.createElement("span");
+          meta.textContent = entry.cacheHit ? "cache" : `${Math.round(entry.elapsedMs)} ms`;
+
+          button.append(ordinal, stamp, meta);
+          item.appendChild(button);
+          els.timeline.appendChild(item);
+        }
+      }
+
+      function renderCapabilities(hints) {
+        if (!hints) {
+          els.capabilityCount.textContent = "0 products";
+          els.capabilities.textContent = "load a loop to inspect product and tilt hints";
+          return;
+        }
+        els.capabilityCount.textContent = `${hints.availableProducts.length}/${hints.products.length} products`;
+        els.capabilities.textContent = JSON.stringify({
+          site: hints.site,
+          volumeTime: hints.volumeTime,
+          selectedProduct: hints.selectedProduct,
+          selectedCut: hints.selectedCut,
+          vcp: hints.vcp,
+          recommendedWarmProducts: hints.recommendedWarmProducts,
+          can: hints.can,
+          cuts: hints.cuts.map((cut) => ({
+            index: cut.index,
+            label: cut.label,
+            elevationDeg: cut.elevationDeg,
+            moments: cut.moments,
+            products: cut.products,
+            selected: cut.selected,
+          })),
+          availableProducts: hints.products
+            .filter((product) => product.available)
+            .map((product) => ({
+              id: product.id,
+              label: product.label,
+              group: product.group,
+              cuts: product.cutIndexes,
+            })),
+        }, null, 2);
+      }
+
+      function renderOptions() {
+        const size = Math.max(1, Number(els.renderSize.value) || 768);
+        return {
+          site: els.site.value,
+          product: els.product.value,
+          frameCount: Number(els.frameCount.value),
+          width: size,
+          height: size,
+          rangeKm: Number(els.rangeKm.value),
+          stormDirDeg: Number(els.stormDir.value),
+          stormSpeedKt: Number(els.stormSpeed.value),
+          smoothing: "native",
+          onProgress: (event) => renderStatus("progress", event),
+        };
+      }
+
+      function archiveTargetTime() {
+        if (!els.archiveDate.value || !els.archiveTime.value) return null;
+        return `${els.archiveDate.value}T${els.archiveTime.value}:00Z`;
+      }
+
+      async function planSpcOutlook() {
+        clearError();
+        try {
+          const day = Number(els.spcDay.value);
+          const kind = els.spcKind.value;
+          const options = selectedMode() === "archive" && els.spcDate.value
+            ? { archiveDate: els.spcDate.value }
+            : {};
+          const urls = spcOutlookUrls(day, kind, options);
+          els.spcCount.textContent = `${urls.length} URLs`;
+          els.spcOutput.textContent = JSON.stringify({
+            day,
+            kind,
+            archiveDate: options.archiveDate || null,
+            urls,
+          }, null, 2);
+        } catch (error) {
+          showError(error);
+        }
+      }
+
+      async function runTask(label, task) {
+        setBusy(true, label);
+        try {
+          await task();
+        } catch (error) {
+          showError(error);
+        } finally {
+          setBusy(false);
+          updateButtons();
+        }
+      }
+
+      function setBusy(nextBusy, label = "") {
+        busy = Boolean(nextBusy);
+        for (const element of [els.load, els.product, els.cut, els.poll, els.warm, els.prev, els.next, els.play]) {
+          element.disabled = busy;
+        }
+        if (label) {
+          els.statusFlag.textContent = label;
+          els.displayMode.textContent = label;
+        }
+        if (!busy) updateButtons();
+      }
+
+      function updateButtons() {
+        const loop = currentLoop();
+        const hasLoop = Boolean(loop?.length);
+        els.prev.disabled = busy || !hasLoop;
+        els.next.disabled = busy || !hasLoop;
+        els.play.disabled = busy || !hasLoop;
+        els.warm.disabled = busy || !hasLoop;
+        els.product.disabled = busy;
+        els.cut.disabled = busy || !hasLoop || !els.cut.options.length;
+        els.poll.disabled = busy || activeSource !== "session" || selectedMode() !== "live" || !hasLoop;
+        els.load.disabled = busy;
+      }
+
+      function renderStatus(flag, payload) {
+        els.statusFlag.textContent = flag;
+        els.status.textContent = JSON.stringify(payload || {}, null, 2);
+      }
+
+      function showError(error) {
+        const message = String(error?.message || error);
+        els.errorFlag.textContent = "error";
+        els.errors.textContent = message;
+        els.statusFlag.textContent = "error";
+        els.status.textContent = message;
+      }
+
+      function clearError() {
+        els.errorFlag.textContent = "clear";
+        els.errors.textContent = "none";
+      }
+
+      function frameSummary(frame) {
+        return {
+          id: frame.frame?.id || null,
+          source: frame.frame?.source || null,
+          volumeTime: frame.frame?.volumeTime || null,
+          width: frame.width,
+          height: frame.height,
+          elapsedMs: Math.round(frame.elapsedMs),
+          cacheHit: frame.cacheHit,
+          pixelStats: renderedPixelStats(frame),
+        };
+      }
+
+      function renderedPixelStats(frame) {
+        const rgba = frame?.rgba || frame?.imageData?.data || null;
+        if (!rgba?.length) return null;
+        const totalPixels = Math.floor(rgba.length / 4);
+        const stepPixels = Math.max(1, Math.floor(totalPixels / 8192));
+        let samples = 0;
+        let nonTransparent = 0;
+        let nonBlack = 0;
+        let maxRgb = 0;
+        let maxAlpha = 0;
+
+        for (let pixel = 0; pixel < totalPixels; pixel += stepPixels) {
+          const offset = pixel * 4;
+          const red = rgba[offset] || 0;
+          const green = rgba[offset + 1] || 0;
+          const blue = rgba[offset + 2] || 0;
+          const alpha = rgba[offset + 3] || 0;
+          samples += 1;
+          if (alpha > 0) nonTransparent += 1;
+          if (alpha > 0 && (red > 4 || green > 4 || blue > 4)) nonBlack += 1;
+          maxRgb = Math.max(maxRgb, red, green, blue);
+          maxAlpha = Math.max(maxAlpha, alpha);
+        }
+
+        return {
+          samples,
+          stepPixels,
+          nonTransparent,
+          nonBlack,
+          nonBlackRatio: samples ? Number((nonBlack / samples).toFixed(6)) : 0,
+          alphaRatio: samples ? Number((nonTransparent / samples).toFixed(6)) : 0,
+          maxRgb,
+          maxAlpha,
+        };
+      }
+
+      function isEmptyLiveFrame(loop, stats) {
+        return loop?.mode === "live"
+          && stats
+          && stats.samples > 0
+          && stats.nonBlackRatio < 0.0005
+          && stats.maxRgb <= 4;
+      }
+
+      function formatPixelStats(stats, emptyLiveFrame) {
+        if (!stats) return "pixels -";
+        const percent = stats.nonBlackRatio * 100;
+        const ratio = percent < 1 ? percent.toFixed(3) : percent.toFixed(1);
+        const label = emptyLiveFrame ? "empty" : "pixels";
+        return `${label} ${ratio}% max ${stats.maxRgb}`;
+      }
+
+      function canvasSummary() {
+        return {
+          backingWidth: els.radar.width,
+          backingHeight: els.radar.height,
+          clientWidth: Math.round(els.radar.getBoundingClientRect().width),
+          clientHeight: Math.round(els.radar.getBoundingClientRect().height),
+        };
+      }
+
+      function sessionStatusPayload(snapshot) {
+        return {
+          status: snapshot.status,
+          site: snapshot.site,
+          mode: snapshot.mode,
+          product: snapshot.product,
+          frameCount: snapshot.frameCount,
+          loaded: snapshot.loaded,
+          error: snapshot.error,
+        };
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Custom Poll Links</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar,
+      .form {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px;
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+        background: #ffffff;
+        color: var(--ink);
+        font: inherit;
+      }
+
+      button,
+      select {
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        background: var(--panel);
+      }
+
+      input {
+        width: 150px;
+      }
+
+      #base {
+        width: min(520px, 100%);
+      }
+
+      textarea {
+        width: 100%;
+        min-height: 82px;
+        resize: vertical;
+      }
+
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 440px;
+        gap: 8px;
+      }
+
+      .map-panel {
+        padding: 6px;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(66vh, 660px);
+        min-height: 380px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      aside {
+        padding: 8px;
+        min-width: 0;
+      }
+
+      pre {
+        margin: 0;
+        height: calc(min(66vh, 660px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 8px;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      @media (max-width: 950px) {
+        main {
+          padding: 6px;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 48vh;
+          min-height: 300px;
+        }
+
+        pre {
+          height: 320px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho Custom GR2A Links</div>
+        <div class="toolbar">
+          <select id="links"></select>
+          <select id="mode">
+            <option value="mock">Mock dir.list</option>
+            <option value="live">Live CORS probe</option>
+          </select>
+          <input id="count" type="number" min="1" max="12" value="4" />
+          <button id="plan">Plan</button>
+        </div>
+        <div class="form">
+          <input id="label" placeholder="label" value="FWLX X-Band" />
+          <input id="site" placeholder="site" value="FWLX" />
+          <input id="lat" placeholder="lat" value="35.254" />
+          <input id="lon" placeholder="lon" value="-87.325" />
+          <input id="url" placeholder="poll URL" value="https://example.test/level2/raw/FWLX" />
+          <button id="save">Save</button>
+        </div>
+        <div class="form">
+          <input id="base" value="https://example.test/level2/raw" />
+          <button id="import">Import GIS</button>
+          <textarea id="gis">fwlx,fwlx, 35.254, -87.325, 220, 1, TN, WLX X-Band
+wilu,wilu, 40.465, -90.685, 212, 1, IL, WIU</textarea>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window map-panel">
+          <canvas id="map" width="980" height="640"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status"></pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        customPollEntryLatLon,
+        customPollLinkFeed,
+        customPollLinksFromGis,
+        customPollMarkers,
+        fetchCommunityDirList,
+        normalizeCustomPollLink,
+        recentCommunityFrames,
+        upsertCustomPollLink,
+      } from "../radar-toolbox.js?v=custompoll1";
+
+      const els = {
+        links: document.getElementById("links"),
+        mode: document.getElementById("mode"),
+        count: document.getElementById("count"),
+        plan: document.getElementById("plan"),
+        label: document.getElementById("label"),
+        site: document.getElementById("site"),
+        lat: document.getElementById("lat"),
+        lon: document.getElementById("lon"),
+        url: document.getElementById("url"),
+        save: document.getElementById("save"),
+        base: document.getElementById("base"),
+        gis: document.getElementById("gis"),
+        import: document.getElementById("import"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+      };
+      const ctx = els.map.getContext("2d");
+
+      let links = customPollLinksFromGis(els.gis.value, els.base.value);
+      let selectedIndex = 0;
+
+      els.links.addEventListener("change", () => {
+        selectedIndex = Math.max(0, Number(els.links.value) || 0);
+        syncForm();
+        draw();
+      });
+      els.save.addEventListener("click", saveForm);
+      els.import.addEventListener("click", importGis);
+      els.plan.addEventListener("click", planSelected);
+      els.map.addEventListener("click", pickMarker);
+      window.addEventListener("resize", resize);
+
+      renderLinks();
+      resize();
+      planSelected();
+
+      function selectedLink() {
+        return links[Math.min(selectedIndex, links.length - 1)] || links[0];
+      }
+
+      function renderLinks() {
+        els.links.textContent = "";
+        links.forEach((link, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          option.textContent = `${link.siteId || link.label} - ${link.pollUrl}`;
+          els.links.appendChild(option);
+        });
+        selectedIndex = Math.min(selectedIndex, Math.max(0, links.length - 1));
+        els.links.value = String(selectedIndex);
+        syncForm();
+        draw();
+      }
+
+      function syncForm() {
+        const link = selectedLink();
+        if (!link) return;
+        const lonLat = customPollEntryLatLon(link);
+        els.label.value = link.label || "";
+        els.site.value = link.siteId || "";
+        els.lat.value = lonLat ? lonLat.lat.toFixed(5) : "";
+        els.lon.value = lonLat ? lonLat.lon.toFixed(5) : "";
+        els.url.value = link.pollUrl || "";
+      }
+
+      function saveForm() {
+        try {
+          const result = upsertCustomPollLink(links, {
+            label: els.label.value,
+            siteId: els.site.value,
+            lat: els.lat.value,
+            lon: els.lon.value,
+            pollUrl: els.url.value,
+          });
+          links = result.links;
+          selectedIndex = result.index;
+          renderLinks();
+          els.status.textContent = JSON.stringify(result, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error?.message || error);
+        }
+      }
+
+      function importGis() {
+        try {
+          const imported = customPollLinksFromGis(els.gis.value, els.base.value);
+          let current = links;
+          for (const link of imported) current = upsertCustomPollLink(current, link).links;
+          links = current;
+          selectedIndex = 0;
+          renderLinks();
+          els.status.textContent = JSON.stringify({ imported: imported.length, links }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error?.message || error);
+        }
+      }
+
+      async function planSelected() {
+        const link = selectedLink();
+        if (!link) return;
+        const count = Math.max(1, Math.min(12, Number(els.count.value) || 4));
+        const feed = customPollLinkFeed(link);
+        const options = els.mode.value === "mock" ? { fetch: mockFetch(feed, count + 1) } : {};
+        els.status.textContent = "planning...";
+        try {
+          const plan = await fetchCommunityDirList(feed, options);
+          const frames = await recentCommunityFrames(feed, count, options);
+          els.status.textContent = JSON.stringify({
+            link: normalizeCustomPollLink(link),
+            feed,
+            listingUrl: plan.listingUrl,
+            entries: plan.entries.length,
+            newest: plan.newest,
+            frames: frames.map((frame) => ({
+              identity: frame.identity,
+              cacheKey: frame.cacheKey,
+              url: frame.url,
+              volumeTime: frame.volumeTime,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error?.message || error);
+        }
+      }
+
+      function mockFetch(feed, count) {
+        const now = new Date("2026-06-13T00:00:00Z");
+        const lines = [];
+        for (let index = 0; index < count; index += 1) {
+          const at = new Date(now.getTime() + index * 8 * 60_000);
+          const stamp = at.toISOString().replace(/[-:]/g, "").slice(0, 15).replace("T", "_");
+          lines.push(`${1_200_000 + index * 2048} ${feed.id}${stamp}`);
+        }
+        const text = `${lines.join("\n")}\n`;
+        return async (url) => ({
+          ok: url.endsWith("/dir.list"),
+          status: url.endsWith("/dir.list") ? 200 : 404,
+          statusText: url.endsWith("/dir.list") ? "OK" : "Not Found",
+          text: async () => text,
+        });
+      }
+
+      function resize() {
+        const rect = els.map.getBoundingClientRect();
+        els.map.width = Math.max(320, Math.round(rect.width));
+        els.map.height = Math.max(260, Math.round(rect.height));
+        draw();
+      }
+
+      function draw() {
+        const width = els.map.width;
+        const height = els.map.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#0d1518";
+        ctx.fillRect(0, 0, width, height);
+        drawGrid(width, height);
+        const markers = customPollMarkers(links);
+        markers.forEach((marker, index) => {
+          const point = project(marker.lon, marker.lat, width, height);
+          const active = index === selectedIndex;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, active ? 9 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = active ? "#ff7476" : "#ffb0b2";
+          ctx.fill();
+          ctx.strokeStyle = "#000000";
+          ctx.stroke();
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText(marker.siteId || marker.label, point.x + 10, point.y - 8);
+        });
+      }
+
+      function drawGrid(width, height) {
+        ctx.strokeStyle = "#243134";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += 80) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += 80) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+      }
+
+      function pickMarker(event) {
+        const markers = customPollMarkers(links);
+        const rect = els.map.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * els.map.width;
+        const y = ((event.clientY - rect.top) / rect.height) * els.map.height;
+        let best = null;
+        markers.forEach((marker, index) => {
+          const point = project(marker.lon, marker.lat, els.map.width, els.map.height);
+          const distance = Math.hypot(point.x - x, point.y - y);
+          if (distance <= 18 && (!best || distance < best.distance)) best = { index, distance };
+        });
+        if (!best) return;
+        selectedIndex = best.index;
+        renderLinks();
+        planSelected();
+      }
+
+      function project(lon, lat, width, height) {
+        const west = -105;
+        const east = -80;
+        const south = 24;
+        const north = 50;
+        return {
+          x: ((lon - west) / (east - west)) * width,
+          y: ((north - lat) / (north - south)) * height,
+        };
+      }
+    </script>
+  </body>
+</html>

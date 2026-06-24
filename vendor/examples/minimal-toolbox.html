@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Toolbox Minimal Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #111;
+        color: #eee;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: 280px 640px;
+        gap: 16px;
+        align-items: start;
+      }
+
+      label,
+      button {
+        display: block;
+        margin: 0 0 10px;
+      }
+
+      select,
+      button {
+        width: 100%;
+        min-height: 34px;
+      }
+
+      canvas {
+        width: 640px;
+        height: 640px;
+        background: #050606;
+        border: 1px solid #333;
+      }
+
+      pre {
+        min-height: 120px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <label>
+          Site
+          <select id="site"></select>
+        </label>
+        <label>
+          Product
+          <select id="product"></select>
+        </label>
+        <button id="load">Load live loop</button>
+        <pre id="status">ready</pre>
+      </section>
+      <canvas id="radar" width="640" height="640"></canvas>
+    </main>
+
+    <script type="module">
+      import {
+        PRODUCT_CATALOG,
+        RADAR_SITES,
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        site: document.getElementById("site"),
+        product: document.getElementById("product"),
+        load: document.getElementById("load"),
+        status: document.getElementById("status"),
+        radar: document.getElementById("radar"),
+      };
+      let loop = null;
+      let frameIndex = 0;
+
+      for (const site of RADAR_SITES) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} ${site.name}`;
+        option.selected = site.id === "KTLX";
+        els.site.appendChild(option);
+      }
+
+      for (const product of PRODUCT_CATALOG) {
+        const option = document.createElement("option");
+        option.value = product.id;
+        option.textContent = `${product.label} - ${product.name}`;
+        els.product.appendChild(option);
+      }
+
+      els.load.addEventListener("click", loadLoop);
+      els.product.addEventListener("change", async () => {
+        if (!loop) return loadLoop();
+        els.status.textContent = `rerender ${els.product.value}`;
+        loop = await toolbox.rerenderLoop(loop, { product: els.product.value });
+        drawCurrent();
+      });
+
+      async function loadLoop() {
+        els.load.disabled = true;
+        try {
+          els.status.textContent = "loading live + archive loop";
+          loop = await toolbox.loadLoop({
+            site: els.site.value,
+            product: els.product.value,
+            frameCount: 6,
+            width: 640,
+            height: 640,
+            rangeKm: 230,
+          });
+          frameIndex = loop.length - 1;
+          drawCurrent();
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+
+      function drawCurrent() {
+        if (!loop?.length) return;
+        const frame = loop.frame(frameIndex);
+        drawFrameToCanvas(els.radar, frame);
+        els.status.textContent = [
+          `${loop.site} ${loop.product} cut ${loop.cut}`,
+          `${frame.frame.source} ${frame.frame.volumeTime || frame.frame.id}`,
+          `render ${Math.round(frame.elapsedMs)} ms cache=${frame.cacheHit}`,
+          `${loop.length} frames`,
+        ].join("\\n");
+      }
+
+      setInterval(() => {
+        if (!loop?.length) return;
+        frameIndex = (frameIndex + 1) % loop.length;
+        drawCurrent();
+      }, 140);
+
+      loadLoop();
+    </script>
+  </body>
+</html>

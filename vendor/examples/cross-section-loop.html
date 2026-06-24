@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Cross-Section Loop Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #0d1012;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        min-height: 32px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 384px minmax(480px, 768px);
+        gap: 12px;
+        overflow-x: auto;
+      }
+
+      figure {
+        margin: 0;
+      }
+
+      canvas {
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      #ppi {
+        width: 384px;
+        height: 384px;
+      }
+
+      #section {
+        width: 768px;
+        height: 288px;
+      }
+
+      figcaption,
+      pre {
+        color: #cbd4d8;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="load">Load PPI + cross-section loop</button>
+        <button id="prev">Prev</button>
+        <button id="next">Next</button>
+      </header>
+      <div class="grid">
+        <figure>
+          <canvas id="ppi" width="384" height="384"></canvas>
+          <figcaption>latest full-resolution PPI frame</figcaption>
+        </figure>
+        <figure>
+          <canvas id="section" width="768" height="288"></canvas>
+          <figcaption>vertical cross-section panel</figcaption>
+        </figure>
+      </div>
+      <pre id="status">ready</pre>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        drawCrossSectionToCanvas,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        load: document.getElementById("load"),
+        prev: document.getElementById("prev"),
+        next: document.getElementById("next"),
+        ppi: document.getElementById("ppi"),
+        section: document.getElementById("section"),
+        status: document.getElementById("status"),
+      };
+
+      const state = {
+        loop: null,
+        sectionLoop: null,
+        index: 0,
+      };
+
+      els.load.addEventListener("click", load);
+      els.prev.addEventListener("click", () => show(state.index - 1));
+      els.next.addEventListener("click", () => show(state.index + 1));
+      load();
+
+      async function load() {
+        els.load.disabled = true;
+        try {
+          els.status.textContent = "loading live loop";
+          const loop = await toolbox.loadLoop({
+            site: "KTLX",
+            mode: "live",
+            product: "REF",
+            frameCount: 4,
+            width: 384,
+            height: 384,
+            rangeKm: 230,
+          });
+          els.status.textContent = "rendering cross-section loop";
+          const sectionLoop = await toolbox.renderCrossSectionLoop(loop, {
+            product: "REF",
+            width: 768,
+            height: 288,
+            topKm: 18,
+            start: { eastKm: -120, northKm: -35 },
+            end: { eastKm: 120, northKm: 35 },
+          });
+          state.loop = loop;
+          state.sectionLoop = sectionLoop;
+          show(sectionLoop.length - 1);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+
+      function show(index) {
+        if (!state.loop || !state.sectionLoop) return;
+        state.index = Math.max(0, Math.min(state.sectionLoop.length - 1, index));
+        const ppi = state.loop.frame(state.index);
+        const section = state.sectionLoop.section(state.index);
+        const panel = state.sectionLoop.panel(state.index);
+        drawFrameToCanvas(els.ppi, ppi);
+        drawCrossSectionToCanvas(els.section, section);
+        els.status.textContent = [
+          `${state.loop.site} ${state.loop.product} frame ${state.index + 1}/${state.sectionLoop.length}`,
+          `ppi ${ppi.width}x${ppi.height} render ${Math.round(ppi.elapsedMs)} ms cache=${ppi.cacheHit}`,
+          `section ${section.width}x${section.height} render ${Math.round(section.elapsedMs)} ms cache=${section.cacheHit}`,
+          `path ${panel.geometry.lengthKm.toFixed(1)} km, top ${panel.geometry.topKm.toFixed(1)} km`,
+          `rgba bytes ${section.rgba.byteLength}, no resampling or downscale`,
+          `start ${panel.geometry.coordinates[0].map((v) => v.toFixed(4)).join(", ")} end ${panel.geometry.coordinates[1].map((v) => v.toFixed(4)).join(", ")}`,
+        ].join("\n");
+      }
+    </script>
+  </body>
+</html>

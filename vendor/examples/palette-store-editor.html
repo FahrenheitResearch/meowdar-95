@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Palette Store Editor</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #111417;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: 360px 512px minmax(320px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+
+      label,
+      button,
+      input,
+      select,
+      textarea {
+        display: block;
+        width: 100%;
+        box-sizing: border-box;
+      }
+
+      label,
+      button {
+        margin: 0 0 10px;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 32px;
+      }
+
+      textarea {
+        min-height: 260px;
+        resize: vertical;
+        font: 12px ui-monospace, SFMono-Regular, Consolas, monospace;
+      }
+
+      canvas {
+        width: 512px;
+        height: 512px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      .preview {
+        height: 28px;
+        border: 1px solid #3b464d;
+        margin: 0 0 10px;
+      }
+
+      pre {
+        margin: 0;
+        color: #d4dde1;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 1220px) {
+        main {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section>
+        <label>
+          Stored palettes
+          <select id="palette"></select>
+        </label>
+        <label>
+          Name
+          <input id="name" />
+        </label>
+        <label>
+          Family
+          <select id="family"></select>
+        </label>
+        <div id="preview" class="preview"></div>
+        <button id="save">Save palette</button>
+        <button id="export">Export .pal</button>
+        <button id="remove">Remove palette</button>
+        <input id="file" type="file" accept=".pal,.txt" />
+      </section>
+
+      <canvas id="radar" width="512" height="512"></canvas>
+
+      <section>
+        <textarea id="text"></textarea>
+        <pre id="status">ready</pre>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        WORKER_VERSION,
+        colorFamilies,
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const samplePaletteText = `
+Product: BR
+Units: dBZ
+Step: 10
+RF: 82 21 86 245
+Color4: -20 0 0 0 0
+Color: 0 25 25 25
+Color: 15 0 180 255
+Color: 30 0 255 110
+Color: 45 255 235 0
+Color: 60 255 60 0
+Color: 75 255 0 220
+`;
+
+      const toolbox = createRadarToolbox();
+      const store = toolbox.createPaletteStore({
+        key: "bowecho:palette-store-editor-example:v1",
+      });
+      const els = {
+        palette: document.getElementById("palette"),
+        family: document.getElementById("family"),
+        name: document.getElementById("name"),
+        text: document.getElementById("text"),
+        save: document.getElementById("save"),
+        export: document.getElementById("export"),
+        remove: document.getElementById("remove"),
+        file: document.getElementById("file"),
+        preview: document.getElementById("preview"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+      };
+      let loop = null;
+      let selectedId = null;
+
+      for (const family of colorFamilies()) {
+        const option = document.createElement("option");
+        option.value = family.id;
+        option.textContent = family.label;
+        els.family.appendChild(option);
+      }
+
+      els.palette.addEventListener("change", () => selectPalette(els.palette.value));
+      els.family.addEventListener("change", refreshPreview);
+      els.text.addEventListener("input", refreshPreview);
+      els.save.addEventListener("click", saveCurrent);
+      els.export.addEventListener("click", exportCurrent);
+      els.remove.addEventListener("click", removeCurrent);
+      els.file.addEventListener("change", importFile);
+
+      await ensureSamplePalette();
+      renderPaletteList();
+      await loadRadar();
+      await applySelectedPalette();
+
+      async function ensureSamplePalette() {
+        if (store.list().some((palette) => palette.id === "sample-ref-proof")) return;
+        store.importText(samplePaletteText, {
+          id: "sample-ref-proof",
+          name: "Sample REF Proof",
+          family: "reflectivity",
+          fileName: "sample-ref-proof.pal",
+        });
+      }
+
+      function renderPaletteList() {
+        const palettes = store.list();
+        els.palette.replaceChildren();
+        for (const palette of palettes) {
+          const option = document.createElement("option");
+          option.value = palette.id;
+          option.textContent = `${palette.name} (${palette.family})`;
+          els.palette.appendChild(option);
+        }
+        selectedId = selectedId && store.get(selectedId) ? selectedId : palettes[0]?.id || null;
+        if (selectedId) els.palette.value = selectedId;
+        selectPalette(selectedId, false);
+      }
+
+      function selectPalette(id, apply = true) {
+        selectedId = id;
+        const palette = store.get(id);
+        if (!palette) return;
+        els.name.value = palette.name;
+        els.family.value = palette.family;
+        els.text.value = store.exportText(palette);
+        refreshPreview();
+        if (apply) applySelectedPalette();
+      }
+
+      function currentPalette() {
+        return toolbox.parsePalette(els.text.value, {
+          id: selectedId || undefined,
+          name: els.name.value || "Browser Palette",
+          family: els.family.value,
+        });
+      }
+
+      function refreshPreview() {
+        try {
+          const palette = currentPalette();
+          els.preview.style.background = toolbox.palettePreviewCss(palette);
+          els.status.textContent = JSON.stringify({
+            workerVersion: WORKER_VERSION,
+            selected: palette.id || selectedId,
+            paletteCount: store.list().length,
+            family: palette.family,
+            stops: palette.stops.length,
+          }, null, 2);
+        } catch (error) {
+          els.preview.style.background = "transparent";
+          els.status.textContent = String(error.message || error);
+        }
+      }
+
+      async function loadRadar() {
+        els.status.textContent = "loading radar";
+        loop = await toolbox.loadLoop({
+          site: "KTLX",
+          mode: "live",
+          product: "REF",
+          frameCount: 2,
+          width: 512,
+          height: 512,
+          rangeKm: 230,
+        });
+      }
+
+      async function applySelectedPalette() {
+        if (!loop) return;
+        const palette = currentPalette();
+        const renderedLoop = await toolbox.rerenderLoop(loop, {
+          palette,
+          width: 512,
+          height: 512,
+        });
+        const frame = renderedLoop.frame(renderedLoop.length - 1);
+        drawFrameToCanvas(els.radar, frame);
+        els.status.textContent = JSON.stringify({
+          workerVersion: WORKER_VERSION,
+          selected: selectedId,
+          paletteCount: store.list().length,
+          family: palette.family,
+          stops: palette.stops.length,
+          render: {
+            width: frame.width,
+            height: frame.height,
+            elapsedMs: Math.round(frame.elapsedMs),
+            cacheHit: frame.cacheHit,
+            paletteKey: frame.renderOptions.paletteKey,
+          },
+          canvas: {
+            width: els.radar.width,
+            height: els.radar.height,
+            clientWidth: els.radar.clientWidth,
+            clientHeight: els.radar.clientHeight,
+          },
+          storageBytes: localStorage.getItem(store.key)?.length || 0,
+        }, null, 2);
+      }
+
+      async function saveCurrent() {
+        const palette = currentPalette();
+        selectedId = store.savePalette(palette, {
+          id: selectedId || palette.id,
+          name: els.name.value || palette.name,
+          family: els.family.value,
+        }).id;
+        renderPaletteList();
+        await applySelectedPalette();
+      }
+
+      function exportCurrent() {
+        const palette = currentPalette();
+        els.text.value = toolbox.exportPalette(palette);
+        refreshPreview();
+      }
+
+      async function removeCurrent() {
+        if (!selectedId) return;
+        store.removePalette(selectedId);
+        selectedId = null;
+        renderPaletteList();
+        await applySelectedPalette();
+      }
+
+      async function importFile() {
+        const file = els.file.files?.[0];
+        if (!file) return;
+        const text = await file.text();
+        const palette = store.importText(text, {
+          name: file.name.replace(/\.(pal|txt)$/i, ""),
+          fileName: file.name,
+        });
+        selectedId = palette.id;
+        renderPaletteList();
+        await applySelectedPalette();
+      }
+    </script>
+  </body>
+</html>

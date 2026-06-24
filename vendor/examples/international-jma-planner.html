@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho JMA International Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "MS Sans Serif", Tahoma, system-ui, sans-serif;
+        background: #008080;
+        color: #111111;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 8px;
+      }
+      main {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        min-height: calc(100vh - 16px);
+      }
+      .window {
+        background: #c0c0c0;
+        border: 2px solid;
+        border-color: #ffffff #404040 #404040 #ffffff;
+        box-shadow: 1px 1px 0 #000000;
+      }
+      .titlebar {
+        min-height: 24px;
+        padding: 4px 6px;
+        background: #000080;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(190px, 1fr) 72px minmax(180px, 230px) auto;
+        gap: 6px;
+        padding: 8px;
+        align-items: center;
+      }
+      select,
+      input,
+      button {
+        min-height: 28px;
+        border: 2px solid;
+        border-color: #ffffff #404040 #404040 #ffffff;
+        background: #dfdfdf;
+        color: #111111;
+        font: inherit;
+        padding: 2px 6px;
+      }
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 450px;
+        gap: 8px;
+      }
+      .panel {
+        padding: 8px;
+      }
+      canvas {
+        width: 100%;
+        height: min(72vh, 690px);
+        min-height: 420px;
+        display: block;
+        background: #101719;
+        border: 2px solid;
+        border-color: #404040 #ffffff #ffffff #404040;
+      }
+      pre {
+        margin: 0;
+        height: calc(min(72vh, 690px) + 16px);
+        overflow: auto;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: #404040 #ffffff #ffffff #404040;
+        padding: 10px;
+        font: 12px/1.35 Consolas, "Courier New", monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      @media (max-width: 980px) {
+        body {
+          padding: 6px;
+        }
+        main {
+          min-height: calc(100vh - 12px);
+        }
+        .toolbar {
+          grid-template-columns: 1fr;
+        }
+        .content {
+          grid-template-columns: 1fr;
+        }
+        canvas {
+          height: 54vh;
+          min-height: 320px;
+        }
+        pre {
+          height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho JMA GRIB2 Tar Planner</div>
+        <div class="toolbar">
+          <select id="site"></select>
+          <input id="count" type="number" min="1" max="8" value="2" />
+          <select id="mode">
+            <option value="mock">Mock JMA tar probes</option>
+            <option value="live">Live JMA tar probes</option>
+          </select>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window panel">
+          <canvas id="map"></canvas>
+        </div>
+        <aside class="window panel">
+          <pre id="status">Loading...</pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        internationalRadarSites,
+        jmaCandidateStamps,
+        jmaTarUrl,
+        recentInternationalFramePlans,
+        recentInternationalFrames,
+      } from "../radar-toolbox.js?v=jma-planner1";
+
+      const sites = internationalRadarSites({ providerId: "jma" });
+      const mockNow = "2026-06-12T06:43:17Z";
+      const els = {
+        site: document.querySelector("#site"),
+        count: document.querySelector("#count"),
+        mode: document.querySelector("#mode"),
+        plan: document.querySelector("#plan"),
+        map: document.querySelector("#map"),
+        status: document.querySelector("#status"),
+      };
+
+      for (const site of sites) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} - ${site.label}`;
+        els.site.append(option);
+      }
+      els.site.value = "ITOK";
+
+      function response(ok, status = 200) {
+        return { ok, status, statusText: ok ? "OK" : "Not Found", text: async () => "" };
+      }
+
+      async function mockFetch(url, init = {}) {
+        if (init.method !== "HEAD") return response(false, 405);
+        const value = String(url);
+        if (value.includes("20260612064000") || value.includes("20260612063500")) return response(true);
+        return response(false, 404);
+      }
+
+      function selectedSite() {
+        return sites.find((site) => site.id === els.site.value) || sites[0];
+      }
+
+      function resizeCanvas() {
+        const rect = els.map.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        els.map.width = Math.max(1, Math.round(rect.width * dpr));
+        els.map.height = Math.max(1, Math.round(rect.height * dpr));
+        drawMap();
+      }
+
+      function project(site) {
+        const bounds = { west: 121.0, east: 146.8, south: 23.0, north: 45.8 };
+        const x = ((site.lon - bounds.west) / (bounds.east - bounds.west)) * els.map.width;
+        const y = (1 - ((site.lat - bounds.south) / (bounds.north - bounds.south))) * els.map.height;
+        return { x, y };
+      }
+
+      function drawMap() {
+        const ctx = els.map.getContext("2d");
+        const width = els.map.width;
+        const height = els.map.height;
+        const active = selectedSite();
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#101719";
+        ctx.fillRect(0, 0, width, height);
+        const grid = Math.max(42, Math.round(width / 13));
+        ctx.strokeStyle = "rgba(88, 160, 150, 0.35)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += grid) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += grid) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+        const land = [
+          [129.0, 31.0], [131.6, 33.0], [134.2, 34.0], [136.5, 34.7], [139.1, 35.1],
+          [141.5, 39.0], [141.9, 41.2], [140.7, 42.1], [143.0, 43.4], [145.0, 44.0],
+          [142.1, 45.1], [139.5, 43.6], [138.4, 40.2], [136.7, 37.3], [135.0, 35.7],
+          [132.8, 34.5], [130.5, 33.8], [129.0, 31.0],
+        ].map(([lon, lat]) => project({ lon, lat }));
+        const ryukyu = [
+          [123.9, 24.5], [125.3, 24.6], [126.8, 26.1], [128.1, 26.6], [129.7, 28.3],
+          [130.5, 30.2],
+        ].map(([lon, lat]) => project({ lon, lat }));
+        ctx.fillStyle = "rgba(64, 92, 67, 0.82)";
+        ctx.strokeStyle = "#a8b77a";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        land.forEach((pt, index) => index ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ryukyu.forEach((pt, index) => index ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
+        ctx.stroke();
+        for (const site of sites) {
+          const point = project(site);
+          const isActive = site.id === active.id;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, isActive ? 10 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = isActive ? "#fff07a" : "#ffbd4a";
+          ctx.strokeStyle = "#151515";
+          ctx.lineWidth = 2;
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#f8f8f8";
+          ctx.font = `${Math.max(11, Math.round(width / 92))}px Tahoma, sans-serif`;
+          ctx.fillText(site.id, point.x + 9, point.y + 5);
+        }
+      }
+
+      function clickSite(event) {
+        const rect = els.map.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (els.map.width / rect.width);
+        const y = (event.clientY - rect.top) * (els.map.height / rect.height);
+        let best = null;
+        for (const site of sites) {
+          const point = project(site);
+          const dist = Math.hypot(point.x - x, point.y - y);
+          if (!best || dist < best.dist) best = { site, dist };
+        }
+        if (best && best.dist < 34 * (window.devicePixelRatio || 1)) {
+          els.site.value = best.site.id;
+          plan();
+          drawMap();
+        }
+      }
+
+      async function plan() {
+        const site = selectedSite();
+        const count = Math.max(1, Math.min(8, Number(els.count.value) || 2));
+        const options = {
+          fetch: els.mode.value === "mock" ? mockFetch : fetch,
+          now: els.mode.value === "mock" ? mockNow : new Date(),
+        };
+        els.status.textContent = "Planning JMA tar frames...";
+        drawMap();
+        try {
+          const [plans, frames] = await Promise.all([
+            recentInternationalFramePlans("jma", site.id, count, options),
+            recentInternationalFrames("jma", site.id, count, options),
+          ]);
+          els.status.textContent = JSON.stringify({
+            provider: "jma",
+            site,
+            candidateStamps: jmaCandidateStamps(options.now),
+            newestTar: jmaTarUrl("N5", jmaCandidateStamps(options.now)[0]),
+            plans: plans.map((plan) => ({
+              identity: plan.identity,
+              volumeTime: plan.volumeTime,
+              format: plan.format,
+              merge: plan.merge,
+              partCount: plan.parts.length,
+              sourceItem: plan.sourceItem,
+            })),
+            frames: frames.map((frame) => ({
+              id: frame.id,
+              cacheKey: frame.cacheKey,
+              volumeTime: frame.volumeTime,
+              url: frame.url,
+              format: frame.format,
+              siteFilteredDecode: frame.siteFilteredDecode,
+              site: frame.internationalSite,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = `JMA planner failed: ${error.message || error}`;
+        }
+      }
+
+      els.plan.addEventListener("click", plan);
+      els.site.addEventListener("change", () => { drawMap(); plan(); });
+      els.mode.addEventListener("change", plan);
+      els.map.addEventListener("click", clickSite);
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+      plan();
+    </script>
+  </body>
+</html>

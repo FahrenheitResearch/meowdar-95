@@ -1,0 +1,278 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Volume Diagnostics</title>
+    <style>
+      body {
+        margin: 18px;
+        background: #101316;
+        color: #edf2f4;
+        font: 13px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header,
+      .stats,
+      .cuts {
+        display: grid;
+        gap: 8px;
+      }
+
+      header {
+        grid-template-columns: repeat(5, max-content) 1fr;
+        align-items: end;
+      }
+
+      label {
+        display: grid;
+        gap: 3px;
+        color: #aeb9bf;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 30px;
+        border: 1px solid #58666e;
+        background: #1b2227;
+        color: #f4f7f8;
+      }
+
+      button {
+        padding: 0 12px;
+      }
+
+      .stats {
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      }
+
+      .stat,
+      .cut {
+        border: 1px solid #39464e;
+        background: #171d21;
+        padding: 10px;
+      }
+
+      .stat strong {
+        display: block;
+        color: #ffffff;
+        font-size: 18px;
+      }
+
+      .cut {
+        display: grid;
+        gap: 8px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #2b363d;
+        padding: 5px 6px;
+        text-align: left;
+      }
+
+      th {
+        color: #aeb9bf;
+        font-weight: 600;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: #c9d3d8;
+      }
+
+      @media (max-width: 760px) {
+        header {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <label>
+          Site
+          <input id="site" value="KTLX" maxlength="5" />
+        </label>
+        <label>
+          Mode
+          <select id="mode">
+            <option value="live">live</option>
+            <option value="recent">recent</option>
+          </select>
+        </label>
+        <label>
+          Frames
+          <input id="frames" type="number" min="1" max="6" value="1" />
+        </label>
+        <label>
+          Product
+          <select id="product">
+            <option>REF</option>
+            <option>DVEL</option>
+            <option>VEL</option>
+          </select>
+        </label>
+        <button id="load">Load</button>
+        <pre id="status">ready</pre>
+      </header>
+
+      <section id="stats" class="stats"></section>
+      <section id="cuts" class="cuts"></section>
+    </main>
+
+    <script type="module">
+      import { createRadarToolbox } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        site: document.getElementById("site"),
+        mode: document.getElementById("mode"),
+        frames: document.getElementById("frames"),
+        product: document.getElementById("product"),
+        load: document.getElementById("load"),
+        status: document.getElementById("status"),
+        stats: document.getElementById("stats"),
+        cuts: document.getElementById("cuts"),
+      };
+
+      els.load.addEventListener("click", loadDiagnostics);
+      loadDiagnostics();
+
+      async function loadDiagnostics() {
+        const site = els.site.value.trim().toUpperCase() || "KTLX";
+        const mode = els.mode.value;
+        const frameCount = clamp(Number(els.frames.value) || 1, 1, 6);
+        const product = els.product.value;
+        els.load.disabled = true;
+        els.status.textContent = "loading";
+        try {
+          await toolbox.configureCache({ volumes: Math.max(24, frameCount + 4), diagnostics: 96 });
+          const loop = await toolbox.loadLoop({
+            site,
+            mode,
+            product,
+            frameCount,
+            width: 256,
+            height: 256,
+            rangeKm: 230,
+          });
+          const diagnosticsLoop = await toolbox.volumeDiagnosticsLoop(loop);
+          const latest = diagnosticsLoop.diagnostics[diagnosticsLoop.diagnostics.length - 1];
+          renderStats(latest, diagnosticsLoop);
+          renderCuts(latest);
+          els.status.textContent = JSON.stringify({
+            site: latest.site,
+            volumeTime: latest.volumeTime,
+            scanMode: latest.scanMode,
+            frames: diagnosticsLoop.diagnostics.length,
+            elapsedMs: Math.round(diagnosticsLoop.elapsedMs),
+            cacheHit: diagnosticsLoop.cacheHit,
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+
+      function renderStats(diagnostics, diagnosticsLoop) {
+        const total = diagnostics.totals;
+        const threeD = diagnostics.threeDimensional;
+        els.stats.innerHTML = "";
+        for (const item of [
+          ["Cuts", total.cutCount],
+          ["Radials", total.radialCount.toLocaleString()],
+          ["Max gates", total.maxGateCount.toLocaleString()],
+          ["Valid gates", total.validGateCount.toLocaleString()],
+          ["3D slots", threeD.largestMomentGateSlots.toLocaleString()],
+          ["3D bytes", formatBytes(threeD.estimatedPositionBytes + threeD.estimatedValueBytes + threeD.estimatedColorBytes)],
+          ["Frames", diagnosticsLoop.diagnostics.length],
+          ["Cache", diagnosticsLoop.cacheHit ? "hit" : "filled"],
+        ]) {
+          const card = document.createElement("div");
+          card.className = "stat";
+          card.innerHTML = `<span>${item[0]}</span><strong>${item[1]}</strong>`;
+          els.stats.append(card);
+        }
+      }
+
+      function renderCuts(diagnostics) {
+        els.cuts.innerHTML = "";
+        for (const cut of diagnostics.cuts) {
+          const section = document.createElement("section");
+          section.className = "cut";
+          const moments = cut.moments.map((moment) => `
+            <tr>
+              <td>${escapeHtml(moment.moment)}</td>
+              <td>${moment.radialCount.toLocaleString()}</td>
+              <td>${moment.gateRange.gateCount.toLocaleString()}</td>
+              <td>${moment.validGateCount.toLocaleString()}</td>
+              <td>${formatNumber(moment.minValue)} to ${formatNumber(moment.maxValue)}</td>
+            </tr>
+          `).join("");
+          section.innerHTML = `
+            <div>
+              <strong>Cut ${cut.index}</strong>
+              ${formatNumber(cut.elevationDeg)} deg
+              ${cut.isRhiLike ? "RHI" : cut.isPpiLike ? "PPI" : "scan"}
+              ${cut.isSectorLike ? "sector" : ""}
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Moment</th>
+                  <th>Radials</th>
+                  <th>Gates</th>
+                  <th>Valid</th>
+                  <th>Range</th>
+                </tr>
+              </thead>
+              <tbody>${moments}</tbody>
+            </table>
+          `;
+          els.cuts.append(section);
+        }
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function formatNumber(value) {
+        return Number.isFinite(value) ? Number(value).toFixed(1) : "n/a";
+      }
+
+      function formatBytes(bytes) {
+        if (!Number.isFinite(bytes)) return "n/a";
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+      }
+
+      function escapeHtml(value) {
+        return String(value).replace(/[&<>"']/g, (char) => ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          "\"": "&quot;",
+          "'": "&#039;",
+        }[char]));
+      }
+    </script>
+  </body>
+</html>

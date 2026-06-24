@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho GeoSphere International Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px;
+      }
+
+      select,
+      input,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      select {
+        min-width: 240px;
+      }
+
+      input {
+        width: 64px;
+      }
+
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 440px;
+        gap: 8px;
+      }
+
+      .map-panel {
+        padding: 6px;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 680px);
+        min-height: 400px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      aside {
+        padding: 8px;
+        min-width: 0;
+      }
+
+      pre {
+        margin: 0;
+        height: calc(min(70vh, 680px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 8px;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      @media (max-width: 1120px) {
+        main {
+          padding: 6px;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 52vh;
+          min-height: 320px;
+        }
+
+        pre {
+          height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho GeoSphere ODIM Planner</div>
+        <div class="toolbar">
+          <select id="site"></select>
+          <input id="count" type="number" min="1" max="12" value="4" />
+          <select id="mode">
+            <option value="mock">Mock datahub listing</option>
+            <option value="live">Live CORS probe</option>
+          </select>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window map-panel">
+          <canvas id="map" width="980" height="640"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status"></pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        geosphereStartAfterKey,
+        geosphereVolumeListingUrl,
+        internationalRadarSites,
+        recentInternationalFramePlans,
+        recentInternationalFrames,
+      } from "../radar-toolbox.js?v=geosphere-planner1";
+
+      const sites = internationalRadarSites({ providerId: "geosphere" });
+      const els = {
+        site: document.getElementById("site"),
+        count: document.getElementById("count"),
+        mode: document.getElementById("mode"),
+        plan: document.getElementById("plan"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+      };
+      const ctx = els.map.getContext("2d");
+      let selectedSite = sites.find((site) => site.id === "hochficht") || sites[0];
+
+      for (const site of sites) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} - ${site.label}`;
+        els.site.appendChild(option);
+      }
+      els.site.value = selectedSite.id;
+
+      els.site.addEventListener("change", () => {
+        selectedSite = sites.find((site) => site.id === els.site.value) || sites[0];
+        draw();
+      });
+      els.plan.addEventListener("click", planSite);
+      els.map.addEventListener("click", pickSite);
+      window.addEventListener("resize", resize);
+      resize();
+      planSite();
+
+      async function planSite() {
+        const count = Math.max(1, Math.min(12, Number(els.count.value) || 4));
+        const now = "2026-06-12T18:35:00Z";
+        const options = els.mode.value === "mock" ? { fetch: mockGeosphereFetch(count), now } : {};
+        els.status.textContent = "planning...";
+        draw();
+        try {
+          const plans = await recentInternationalFramePlans("geosphere", selectedSite.id, count, options);
+          const frames = await recentInternationalFrames("geosphere", selectedSite.id, count, options);
+          els.status.textContent = JSON.stringify({
+            provider: "geosphere",
+            site: selectedSite,
+            startAfter: geosphereStartAfterKey(now, 12),
+            listing: geosphereVolumeListingUrl({ now, lookbackHours: 12 }),
+            plans: plans.map((plan) => ({
+              identity: plan.identity,
+              volumeTime: plan.volumeTime,
+              merge: plan.merge,
+              parts: plan.parts,
+            })),
+            frames: frames.map((frame) => ({
+              id: frame.id,
+              cacheKey: frame.cacheKey,
+              identity: frame.identity,
+              url: frame.url,
+              volumeTime: frame.volumeTime,
+              site: frame.internationalSite,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error?.message || error);
+        }
+      }
+
+      function mockGeosphereFetch(count) {
+        const newest = new Date("2026-06-12T06:35:00Z");
+        const contents = [];
+        for (let index = count - 1; index >= 0; index -= 1) {
+          const at = new Date(newest.getTime() - index * 5 * 60_000);
+          const iso = at.toISOString();
+          const stamp = `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}${iso.slice(11, 13)}${iso.slice(14, 16)}`;
+          const key = `resources/radar_volumen_hochficht-v1-5min/filelisting/WXRHOF_${stamp}.hdf`;
+          contents.push(`
+            <Contents>
+              <Key>${key}</Key>
+              <LastModified>${at.toISOString()}</LastModified>
+              <Size>${33000000 + index * 1000}</Size>
+            </Contents>
+          `);
+        }
+        const xml = `<?xml version="1.0" encoding="UTF-8"?><ListBucketResult>${contents.join("")}<IsTruncated>false</IsTruncated></ListBucketResult>`;
+        return async (url) => ({
+          ok: String(url).includes("public.hub.geosphere.at/datahub"),
+          status: String(url).includes("public.hub.geosphere.at/datahub") ? 200 : 404,
+          statusText: String(url).includes("public.hub.geosphere.at/datahub") ? "OK" : "Not Found",
+          text: async () => xml,
+        });
+      }
+
+      function resize() {
+        const rect = els.map.getBoundingClientRect();
+        const dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+        els.map.width = Math.max(1, Math.round(rect.width * dpr));
+        els.map.height = Math.max(1, Math.round(rect.height * dpr));
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        draw();
+      }
+
+      function project(site) {
+        const rect = els.map.getBoundingClientRect();
+        const bounds = { west: 9.2, east: 17.2, south: 46.2, north: 49.4 };
+        const x = ((site.lon - bounds.west) / (bounds.east - bounds.west)) * rect.width;
+        const y = ((bounds.north - site.lat) / (bounds.north - bounds.south)) * rect.height;
+        return { x, y };
+      }
+
+      function pickSite(event) {
+        const rect = els.map.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+        let best = null;
+        for (const site of sites) {
+          const point = project(site);
+          const distance = Math.hypot(point.x - x, point.y - y);
+          if (!best || distance < best.distance) best = { site, distance };
+        }
+        if (best && best.distance < 28) {
+          selectedSite = best.site;
+          els.site.value = selectedSite.id;
+          draw();
+        }
+      }
+
+      function draw() {
+        const rect = els.map.getBoundingClientRect();
+        ctx.clearRect(0, 0, rect.width, rect.height);
+        const gradient = ctx.createLinearGradient(0, 0, 0, rect.height);
+        gradient.addColorStop(0, "#143238");
+        gradient.addColorStop(1, "#0f1518");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, rect.width, rect.height);
+
+        ctx.strokeStyle = "#2c5559";
+        ctx.lineWidth = 1;
+        for (let x = 0; x < rect.width; x += 48) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, rect.height);
+          ctx.stroke();
+        }
+        for (let y = 0; y < rect.height; y += 48) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(rect.width, y);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "#263b31";
+        ctx.strokeStyle = "#6f9770";
+        ctx.lineWidth = 2;
+        const austria = [
+          [0.10, 0.57], [0.22, 0.47], [0.37, 0.49], [0.50, 0.40],
+          [0.66, 0.43], [0.81, 0.36], [0.92, 0.45], [0.84, 0.58],
+          [0.68, 0.60], [0.54, 0.70], [0.38, 0.66], [0.21, 0.70],
+        ];
+        ctx.beginPath();
+        for (const [index, point] of austria.entries()) {
+          const x = point[0] * rect.width;
+          const y = point[1] * rect.height;
+          if (index === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        for (const site of sites) {
+          const point = project(site);
+          const active = site.id === selectedSite.id;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, active ? 11 : 8, 0, Math.PI * 2);
+          ctx.fillStyle = active ? "#ffe066" : "#ffbf4a";
+          ctx.fill();
+          ctx.strokeStyle = "#050505";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+          ctx.fillStyle = "#ffffff";
+          ctx.fillText(site.label, point.x + 14, point.y - 10);
+          ctx.fillText(`${site.lat.toFixed(4)}, ${site.lon.toFixed(4)}`, point.x + 14, point.y + 6);
+        }
+      }
+    </script>
+  </body>
+</html>

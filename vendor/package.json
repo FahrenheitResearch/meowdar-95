@@ -1,0 +1,54 @@
+{
+  "name": "@fahrenheitresearch/bowecho-radar-toolbox",
+  "version": "0.1.0",
+  "description": "Client-side BowEcho-derived Level II radar toolbox for browser UIs.",
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "sideEffects": false,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FahrenheitResearch/bowecho-radar-toolbox.git",
+    "directory": "web"
+  },
+  "bugs": {
+    "url": "https://github.com/FahrenheitResearch/bowecho-radar-toolbox/issues"
+  },
+  "homepage": "https://github.com/FahrenheitResearch/bowecho-radar-toolbox#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "radar",
+    "nexrad",
+    "level2",
+    "weather",
+    "wasm",
+    "webgpu",
+    "mapbox"
+  ],
+  "exports": {
+    ".": {
+      "types": "./radar-toolbox.d.ts",
+      "default": "./radar-toolbox.js"
+    }
+  },
+  "types": "./radar-toolbox.d.ts",
+  "files": [
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "docs",
+    "radar-toolbox.js",
+    "radar-toolbox.d.ts",
+    "global-radar-catalog.js",
+    "worker.js",
+    "sites.js",
+    "examples",
+    "tests",
+    "pkg"
+  ],
+  "scripts": {
+    "test": "node ./tests/sdk-contract.mjs"
+  }
+}

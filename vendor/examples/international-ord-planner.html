@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho ORD International Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "MS Sans Serif", Tahoma, system-ui, sans-serif;
+        background: #008080;
+        color: #111111;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 8px;
+      }
+      main {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        min-height: calc(100vh - 16px);
+      }
+      .window {
+        background: #c0c0c0;
+        border: 2px solid;
+        border-color: #ffffff #404040 #404040 #ffffff;
+        box-shadow: 1px 1px 0 #000000;
+      }
+      .titlebar {
+        min-height: 24px;
+        padding: 4px 6px;
+        background: #000080;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(240px, 1fr) 72px minmax(180px, 230px) auto;
+        gap: 6px;
+        padding: 8px;
+        align-items: center;
+      }
+      select,
+      input,
+      button {
+        min-height: 28px;
+        border: 2px solid;
+        border-color: #ffffff #404040 #404040 #ffffff;
+        background: #dfdfdf;
+        color: #111111;
+        font: inherit;
+        padding: 2px 6px;
+      }
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(360px, 500px);
+        gap: 8px;
+      }
+      .panel {
+        padding: 8px;
+      }
+      canvas {
+        width: 100%;
+        height: min(72vh, 700px);
+        min-height: 420px;
+        display: block;
+        background: #101719;
+        border: 2px solid;
+        border-color: #404040 #ffffff #ffffff #404040;
+        cursor: crosshair;
+      }
+      pre {
+        margin: 0;
+        height: calc(min(72vh, 700px) + 16px);
+        overflow: auto;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: #404040 #ffffff #ffffff #404040;
+        padding: 10px;
+        font: 12px/1.35 Consolas, "Courier New", monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      @media (max-width: 980px) {
+        body {
+          padding: 6px;
+        }
+        main {
+          min-height: calc(100vh - 12px);
+        }
+        .toolbar {
+          grid-template-columns: 1fr;
+        }
+        .content {
+          grid-template-columns: 1fr;
+        }
+        canvas {
+          height: 54vh;
+          min-height: 320px;
+        }
+        pre {
+          height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho EUMETNET ORD ODIM_H5 Planner</div>
+        <div class="toolbar">
+          <select id="site"></select>
+          <input id="count" type="number" min="1" max="8" value="2" />
+          <select id="mode">
+            <option value="mock">Mock ORD listings</option>
+            <option value="live">Live ORD listings</option>
+          </select>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window panel">
+          <canvas id="map"></canvas>
+        </div>
+        <aside class="window panel">
+          <pre id="status">Loading...</pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        internationalFrameFromPlan,
+        internationalRadarSites,
+        ordHourListingUrl,
+        ordObjectKinds,
+        recentInternationalFramePlans,
+      } from "../radar-toolbox.js?v=ord-planner1";
+
+      const sites = internationalRadarSites({ providerId: "ord" });
+      const mockNow = "2026-06-12T14:59:00Z";
+      const fixtures = {
+        nlhrw: {
+          kind: "PVOL",
+          keys: [
+            "2026/06/12/NL/nlhrw/PVOL/nlhrw@20260612T1450@0.3_0.8_1.2_2.0_2.8_4.5_6.0_8.0_10.0_12.0_15.0_20.0_25.0_90.0@DBZH_TH_VRADH.h5",
+            "2026/06/12/NL/nlhrw/PVOL/nlhrw@20260612T1455@0.3_0.8_1.2_2.0_2.8_4.5_6.0_8.0_10.0_12.0_15.0_20.0_25.0_90.0@DBZH_TH_VRADH.h5",
+          ],
+        },
+        nohur: {
+          kind: "PVOL",
+          keys: [
+            "2026/06/12/NO/nohur/PVOL/nohur@20260612T1455@0.5_1.0_1.5_2.4_3.4_4.3_6.0_9.0_12.0_15.0@DBZH.h5",
+            "2026/06/12/NO/nohur/PVOL/nohur@20260612T1455@0.5_1.0_1.5_2.4_3.4_4.3_6.0_9.0_12.0_15.0@TH.h5",
+            "2026/06/12/NO/nohur/PVOL/nohur@20260612T1456@0.5_1.0_1.5_2.4_3.4_4.3_6.0_9.0_12.0_15.0@VRADH.h5",
+          ],
+        },
+        frtou: {
+          kind: "SCAN",
+          keys: [
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1454@0.81@DBZH_TH_VRADH.h5",
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1455@0.78@DBZH_TH_VRADH.h5",
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1456@1.48@DBZH_TH_VRADH.h5",
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1457@2.5@DBZH_TH_VRADH.h5",
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1458@3.5@DBZH_TH_VRADH.h5",
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1459@6.49@DBZH_TH_VRADH.h5",
+            "2026/06/12/FR/frtou/SCAN/frtou@20260612T1459@9.43@DBZH_TH_VRADH.h5",
+          ],
+        },
+      };
+      const els = {
+        site: document.querySelector("#site"),
+        count: document.querySelector("#count"),
+        mode: document.querySelector("#mode"),
+        plan: document.querySelector("#plan"),
+        map: document.querySelector("#map"),
+        status: document.querySelector("#status"),
+      };
+
+      for (const site of sites) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} - ${site.label}`;
+        els.site.append(option);
+      }
+      els.site.value = "nlhrw";
+
+      function s3XmlForKeys(keys) {
+        return `<ListBucketResult>
+${keys.map((key) => `  <Contents><Key>${key}</Key><Size>123</Size></Contents>`).join("\n")}
+  <IsTruncated>false</IsTruncated>
+</ListBucketResult>`;
+      }
+
+      async function mockFetch(url) {
+        const params = new URL(String(url)).searchParams;
+        const prefix = params.get("prefix") || "";
+        for (const [siteId, fixture] of Object.entries(fixtures)) {
+          if (prefix.includes(`/${siteId}/${fixture.kind}/${siteId}@20260612T14`)) {
+            return { ok: true, status: 200, statusText: "OK", text: async () => s3XmlForKeys(fixture.keys) };
+          }
+          if (prefix.includes(`/${siteId}/${fixture.kind}/${siteId}@20260612T13`)) {
+            return { ok: true, status: 200, statusText: "OK", text: async () => s3XmlForKeys([]) };
+          }
+        }
+        return { ok: true, status: 200, statusText: "OK", text: async () => s3XmlForKeys([]) };
+      }
+
+      function selectedSite() {
+        return sites.find((site) => site.id === els.site.value) || sites[0];
+      }
+
+      function resizeCanvas() {
+        const rect = els.map.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        els.map.width = Math.max(1, Math.round(rect.width * dpr));
+        els.map.height = Math.max(1, Math.round(rect.height * dpr));
+        drawMap();
+      }
+
+      function project(site) {
+        const bounds = { west: -27.0, east: 31.0, south: 34.0, north: 72.0 };
+        const x = ((site.lon - bounds.west) / (bounds.east - bounds.west)) * els.map.width;
+        const y = (1 - ((site.lat - bounds.south) / (bounds.north - bounds.south))) * els.map.height;
+        return { x, y };
+      }
+
+      function drawMap() {
+        const ctx = els.map.getContext("2d");
+        const width = els.map.width;
+        const height = els.map.height;
+        const active = selectedSite();
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#101719";
+        ctx.fillRect(0, 0, width, height);
+        const grid = Math.max(44, Math.round(width / 14));
+        ctx.strokeStyle = "rgba(87, 157, 150, 0.35)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += grid) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += grid) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+        const shapes = [
+          [[-10, 35], [-6, 43], [-3, 48], [2, 51], [6, 53], [10, 56], [15, 60], [22, 66], [30, 70]],
+          [[-24, 63], [-21, 65], [-19, 66], [-17, 65], [-18, 63], [-22, 62]],
+          [[-10, 50], [-5, 51], [-4, 56], [-8, 58], [-11, 56]],
+          [[4, 49], [7, 52], [5, 54], [3, 52]],
+          [[17, 54], [24, 57], [27, 60], [25, 65], [20, 66], [17, 62]],
+        ];
+        ctx.strokeStyle = "rgba(180, 225, 210, 0.62)";
+        ctx.lineWidth = Math.max(1, width / 900);
+        for (const shape of shapes) {
+          ctx.beginPath();
+          for (const [index, point] of shape.entries()) {
+            const xy = project({ lon: point[0], lat: point[1] });
+            if (index === 0) ctx.moveTo(xy.x, xy.y);
+            else ctx.lineTo(xy.x, xy.y);
+          }
+          ctx.stroke();
+        }
+        for (const site of sites) {
+          const point = project(site);
+          const selected = site.id === active.id;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, selected ? 8 : 4.5, 0, Math.PI * 2);
+          ctx.fillStyle = selected ? "#ffef76" : "#4dd0e1";
+          ctx.fill();
+          ctx.strokeStyle = selected ? "#000000" : "rgba(255,255,255,0.75)";
+          ctx.stroke();
+        }
+        const labelPoint = project(active);
+        ctx.font = `${Math.max(13, Math.round(width / 72))}px "MS Sans Serif", Tahoma, sans-serif`;
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "#000000";
+        ctx.lineWidth = 3;
+        ctx.strokeText(active.label, labelPoint.x + 12, labelPoint.y - 10);
+        ctx.fillText(active.label, labelPoint.x + 12, labelPoint.y - 10);
+      }
+
+      function nearestSiteAt(clientX, clientY) {
+        const rect = els.map.getBoundingClientRect();
+        const scaleX = els.map.width / rect.width;
+        const scaleY = els.map.height / rect.height;
+        const x = (clientX - rect.left) * scaleX;
+        const y = (clientY - rect.top) * scaleY;
+        let best = null;
+        for (const site of sites) {
+          const point = project(site);
+          const distance = Math.hypot(point.x - x, point.y - y);
+          if (!best || distance < best.distance) best = { site, distance };
+        }
+        return best && best.distance <= 18 * (window.devicePixelRatio || 1) ? best.site : null;
+      }
+
+      async function plan() {
+        const site = selectedSite();
+        const count = Math.max(1, Math.min(8, Number(els.count.value) || 1));
+        const mode = els.mode.value;
+        const options = {
+          fetch: mode === "mock" ? mockFetch : globalThis.fetch.bind(globalThis),
+          now: mode === "mock" ? mockNow : new Date(),
+          frameCount: count,
+          timeoutMs: 15000,
+        };
+        els.status.textContent = `Planning ${site.id}...`;
+        drawMap();
+        try {
+          const plans = await recentInternationalFramePlans("ord", site.id, count, options);
+          const frames = plans.map((framePlan) => internationalFrameFromPlan(framePlan));
+          const listingUrls = ordObjectKinds(site.id).map((kind) => ordHourListingUrl(site.id, kind, options.now));
+          els.status.textContent = JSON.stringify({
+            site: `${site.id} ${site.label}`,
+            mode,
+            preferredKinds: ordObjectKinds(site.id),
+            listingUrls,
+            plans: plans.map((framePlan) => ({
+              identity: framePlan.identity,
+              volumeTime: framePlan.volumeTime,
+              merge: framePlan.merge,
+              partCount: framePlan.parts.length,
+              objectKind: framePlan.sourceItem?.objectKind,
+              firstPart: framePlan.parts[0]?.url,
+            })),
+            frames: frames.map((frame) => ({
+              id: frame.id,
+              cacheKey: frame.cacheKey,
+              urls: frame.urls?.length || 1,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = `${error.message || error}\n\n${mode === "mock" ? "Mock fixtures are available for nlhrw, nohur, and frtou." : "Live planning depends on browser CORS and current ORD bucket availability."}`;
+        }
+      }
+
+      els.plan.addEventListener("click", plan);
+      els.site.addEventListener("change", () => {
+        drawMap();
+        plan();
+      });
+      els.mode.addEventListener("change", plan);
+      els.map.addEventListener("click", (event) => {
+        const site = nearestSiteAt(event.clientX, event.clientY);
+        if (!site) return;
+        els.site.value = site.id;
+        plan();
+      });
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+      plan();
+    </script>
+  </body>
+</html>

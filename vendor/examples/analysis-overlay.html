@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Analysis Overlay Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #0d1012;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        min-height: 32px;
+      }
+
+      .stage {
+        position: relative;
+        width: 512px;
+        height: 512px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      canvas {
+        position: absolute;
+        inset: 0;
+        width: 512px;
+        height: 512px;
+      }
+
+      pre {
+        margin: 0;
+        color: #cbd4d8;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="load">Load analysis overlay</button>
+      </header>
+      <div class="stage">
+        <canvas id="radar" width="512" height="512"></canvas>
+        <canvas id="overlay" width="512" height="512"></canvas>
+      </div>
+      <pre id="status">ready</pre>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        load: document.getElementById("load"),
+        radar: document.getElementById("radar"),
+        overlay: document.getElementById("overlay"),
+        status: document.getElementById("status"),
+      };
+
+      els.load.addEventListener("click", load);
+      load();
+
+      async function load() {
+        els.load.disabled = true;
+        try {
+          els.status.textContent = "loading live loop";
+          const loop = await toolbox.loadLoop({
+            site: "KTLX",
+            mode: "live",
+            product: "REF",
+            frameCount: 3,
+            width: 512,
+            height: 512,
+            rangeKm: 230,
+          });
+          const frame = loop.frame(loop.length - 1);
+          drawFrameToCanvas(els.radar, frame);
+
+          els.status.textContent = "running native analysis";
+          const analysis = await toolbox.analyzeFrame(frame.frame, { site: loop.site });
+          const overlay = toolbox.analysisOverlay(analysis, { site: loop.site });
+          drawOverlay(els.overlay, overlay, frame.renderOptions);
+
+          els.status.textContent = [
+            `${loop.site} ${frame.frame.volumeTime || frame.frame.id}`,
+            `render ${frame.width}x${frame.height} ${Math.round(frame.elapsedMs)} ms cache=${frame.cacheHit}`,
+            `analysis ${Math.round(analysis.elapsedMs)} ms cache=${analysis.cacheHit}`,
+            `cells ${overlay.counts.cells}, rotations ${overlay.counts.rotations}, features ${overlay.counts.features}`,
+            `geojson features ${overlay.geojson.features.length}`,
+          ].join("\n");
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+
+      function drawOverlay(canvas, overlay, renderOptions) {
+        canvas.width = renderOptions.width;
+        canvas.height = renderOptions.height;
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.lineWidth = 2;
+        ctx.font = "12px system-ui, sans-serif";
+        const kmPerPxX = (renderOptions.rangeKm * 2) / renderOptions.width;
+        const kmPerPxY = (renderOptions.rangeKm * 2) / renderOptions.height;
+
+        for (const feature of overlay.cells) {
+          const point = featurePoint(feature, renderOptions, kmPerPxX, kmPerPxY);
+          const radius = Math.max(5, Math.min(24, Number(feature.properties.eqRadiusKm || 4) / kmPerPxX));
+          ctx.strokeStyle = "#ffe66d";
+          ctx.fillStyle = "rgba(255, 230, 109, 0.16)";
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          label(ctx, point.x + radius + 4, point.y, `${feature.properties.id} ${Math.round(feature.properties.maxDbz || 0)}`);
+        }
+
+        for (const feature of overlay.rotations) {
+          const point = featurePoint(feature, renderOptions, kmPerPxX, kmPerPxY);
+          ctx.strokeStyle = feature.properties.strength === "tvs" ? "#ff4a6a" : "#8ad7ff";
+          ctx.fillStyle = feature.properties.strength === "tvs" ? "rgba(255, 74, 106, 0.22)" : "rgba(138, 215, 255, 0.18)";
+          diamond(ctx, point.x, point.y, 12);
+          label(ctx, point.x + 16, point.y, `${feature.properties.id} ${feature.properties.strength}`);
+        }
+      }
+
+      function featurePoint(feature, renderOptions, kmPerPxX, kmPerPxY) {
+        return {
+          x: renderOptions.width * 0.5 + Number(feature.properties.eastKm || 0) / kmPerPxX,
+          y: renderOptions.height * 0.5 - Number(feature.properties.northKm || 0) / kmPerPxY,
+        };
+      }
+
+      function diamond(ctx, x, y, size) {
+        ctx.beginPath();
+        ctx.moveTo(x, y - size);
+        ctx.lineTo(x + size, y);
+        ctx.lineTo(x, y + size);
+        ctx.lineTo(x - size, y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      function label(ctx, x, y, text) {
+        ctx.fillStyle = "#eef2f4";
+        ctx.strokeStyle = "rgba(0, 0, 0, 0.8)";
+        ctx.lineWidth = 3;
+        ctx.strokeText(text, x, y - 4);
+        ctx.fillText(text, x, y - 4);
+      }
+    </script>
+  </body>
+</html>

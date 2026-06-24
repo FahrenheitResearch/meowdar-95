@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho CHMI International Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "MS Sans Serif", Tahoma, system-ui, sans-serif;
+        background: #008080;
+        color: #111111;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        padding: 8px;
+      }
+      main {
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        min-height: calc(100vh - 16px);
+      }
+      .window {
+        background: #c0c0c0;
+        border: 2px solid;
+        border-color: #ffffff #404040 #404040 #ffffff;
+        box-shadow: 1px 1px 0 #000000;
+      }
+      .titlebar {
+        min-height: 24px;
+        padding: 4px 6px;
+        background: #000080;
+        color: #ffffff;
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(190px, 1fr) 70px minmax(190px, 240px) auto auto;
+        gap: 6px;
+        padding: 8px;
+        align-items: center;
+      }
+      select,
+      input,
+      button {
+        min-height: 28px;
+        border: 2px solid;
+        border-color: #ffffff #404040 #404040 #ffffff;
+        background: #dfdfdf;
+        color: #111111;
+        font: inherit;
+        padding: 2px 6px;
+      }
+      label {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+      }
+      input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        padding: 0;
+      }
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 440px;
+        gap: 8px;
+      }
+      .panel {
+        padding: 8px;
+      }
+      canvas {
+        width: 100%;
+        height: min(72vh, 690px);
+        min-height: 420px;
+        display: block;
+        background: #101719;
+        border: 2px solid;
+        border-color: #404040 #ffffff #ffffff #404040;
+      }
+      pre {
+        margin: 0;
+        height: calc(min(72vh, 690px) + 16px);
+        overflow: auto;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: #404040 #ffffff #ffffff #404040;
+        padding: 10px;
+        font: 12px/1.35 Consolas, "Courier New", monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+      @media (max-width: 980px) {
+        body {
+          padding: 6px;
+        }
+        main {
+          min-height: calc(100vh - 12px);
+        }
+        .toolbar {
+          grid-template-columns: 1fr;
+        }
+        .content {
+          grid-template-columns: 1fr;
+        }
+        canvas {
+          height: 54vh;
+          min-height: 320px;
+        }
+        pre {
+          height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho CHMI Task Merge Planner</div>
+        <div class="toolbar">
+          <select id="site"></select>
+          <input id="count" type="number" min="1" max="8" value="2" />
+          <select id="mode">
+            <option value="mock">Mock CHMI listings</option>
+            <option value="live">Live CHMI listings</option>
+          </select>
+          <label><input id="dualPol" type="checkbox" /> Dual-pol products</label>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window panel">
+          <canvas id="map"></canvas>
+        </div>
+        <aside class="window panel">
+          <pre id="status">Loading...</pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        chmiProductHdf5ListingUrl,
+        chmiSiteCatalogUrl,
+        internationalRadarSites,
+        recentInternationalFramePlans,
+        recentInternationalFrames,
+      } from "../radar-toolbox.js?v=chmi-planner1";
+
+      const sites = internationalRadarSites({ providerId: "chmi" });
+      const els = {
+        site: document.querySelector("#site"),
+        count: document.querySelector("#count"),
+        mode: document.querySelector("#mode"),
+        dualPol: document.querySelector("#dualPol"),
+        plan: document.querySelector("#plan"),
+        map: document.querySelector("#map"),
+        status: document.querySelector("#status"),
+      };
+
+      for (const site of sites) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} - ${site.label}`;
+        els.site.append(option);
+      }
+      els.site.value = "brd";
+
+      const productsHtml = `<html><body><pre>
+<a href="../">../</a>
+<a href="vol_phidp/">vol_phidp/</a>
+<a href="vol_rhohv/">vol_rhohv/</a>
+<a href="vol_v/">vol_v/</a>
+<a href="vol_z/">vol_z/</a>
+<a href="vol_zdr/">vol_zdr/</a>
+</pre></body></html>`;
+      const zFiles = [
+        "T_PAGZ60_C_OKPR_20260612062411.hdf",
+        "T_PAGZ60_C_OKPR_20260612062914.hdf",
+        "T_PAGZ60_C_OKPR_20260612063412.hdf",
+        "T_PAGZ60_C_OKPR_20260612063911.hdf",
+        "T_PAYA60_C_OKPR_20260612060948.hdf",
+        "T_PAYA60_C_OKPR_20260612061959.hdf",
+        "T_PAYA60_C_OKPR_20260612062948.hdf",
+        "T_PAYA60_C_OKPR_20260612063948.hdf",
+        "T_PAYB60_C_OKPR_20260612062526.hdf",
+        "T_PAYB60_C_OKPR_20260612063025.hdf",
+        "T_PAYB60_C_OKPR_20260612063526.hdf",
+        "T_PAYB60_C_OKPR_20260612064025.hdf",
+      ];
+      const vFiles = [
+        "T_PAHZ60_C_OKPR_20260612062411.hdf",
+        "T_PAHZ60_C_OKPR_20260612062914.hdf",
+        "T_PAHZ60_C_OKPR_20260612063412.hdf",
+        "T_PAHZ60_C_OKPR_20260612063911.hdf",
+        "T_PAHA60_C_OKPR_20260612060948.hdf",
+        "T_PAHA60_C_OKPR_20260612061959.hdf",
+        "T_PAHA60_C_OKPR_20260612062948.hdf",
+        "T_PAHA60_C_OKPR_20260612063948.hdf",
+        "T_PAHB60_C_OKPR_20260612062526.hdf",
+        "T_PAHB60_C_OKPR_20260612063025.hdf",
+        "T_PAHB60_C_OKPR_20260612063526.hdf",
+        "T_PAHB60_C_OKPR_20260612064025.hdf",
+      ];
+
+      function fileHtml(names) {
+        return `<html><body><pre><a href="../">../</a>${names.map((name) => `<a href="${name}">${name}</a>`).join("\n")}</pre></body></html>`;
+      }
+
+      async function mockFetch(url) {
+        const value = String(url);
+        const siteId = els.site.value;
+        if (value.endsWith(`/${siteId}/`)) return response(productsHtml);
+        if (value.endsWith(`/${siteId}/vol_z/hdf5/`)) return response(fileHtml(zFiles));
+        if (value.endsWith(`/${siteId}/vol_v/hdf5/`)) return response(fileHtml(vFiles));
+        return response(`<html><body><pre><a href="../">../</a></pre></body></html>`);
+      }
+
+      function response(text) {
+        return { ok: true, status: 200, statusText: "OK", text: async () => text };
+      }
+
+      function selectedSite() {
+        return sites.find((site) => site.id === els.site.value) || sites[0];
+      }
+
+      function resizeCanvas() {
+        const rect = els.map.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        els.map.width = Math.max(1, Math.round(rect.width * dpr));
+        els.map.height = Math.max(1, Math.round(rect.height * dpr));
+        drawMap();
+      }
+
+      function project(site) {
+        const bounds = { west: 12.0, east: 18.2, south: 48.1, north: 51.1 };
+        const x = ((site.lon - bounds.west) / (bounds.east - bounds.west)) * els.map.width;
+        const y = (1 - ((site.lat - bounds.south) / (bounds.north - bounds.south))) * els.map.height;
+        return { x, y };
+      }
+
+      function drawMap() {
+        const ctx = els.map.getContext("2d");
+        const width = els.map.width;
+        const height = els.map.height;
+        const active = selectedSite();
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#101719";
+        ctx.fillRect(0, 0, width, height);
+        const grid = Math.max(42, Math.round(width / 12));
+        ctx.strokeStyle = "rgba(88, 160, 150, 0.35)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += grid) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += grid) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+        const outline = [
+          [12.1, 50.2], [12.8, 50.7], [14.3, 50.9], [15.4, 50.4], [16.2, 50.4],
+          [17.1, 49.9], [18.0, 49.5], [17.2, 48.8], [16.0, 48.6], [14.7, 48.7],
+          [13.5, 48.6], [12.4, 49.2], [12.1, 50.2],
+        ].map(([lon, lat]) => project({ lon, lat }));
+        ctx.fillStyle = "rgba(64, 92, 67, 0.82)";
+        ctx.strokeStyle = "#a8b77a";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        outline.forEach((pt, index) => index ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
+        ctx.fill();
+        ctx.stroke();
+        for (const site of sites) {
+          const point = project(site);
+          const isActive = site.id === active.id;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, isActive ? 10 : 7, 0, Math.PI * 2);
+          ctx.fillStyle = isActive ? "#fff07a" : "#ffbd4a";
+          ctx.strokeStyle = "#151515";
+          ctx.lineWidth = 2;
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#f8f8f8";
+          ctx.font = `${Math.max(12, Math.round(width / 82))}px Tahoma, sans-serif`;
+          ctx.fillText(site.id, point.x + 10, point.y + 5);
+        }
+      }
+
+      function clickSite(event) {
+        const rect = els.map.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (els.map.width / rect.width);
+        const y = (event.clientY - rect.top) * (els.map.height / rect.height);
+        let best = null;
+        for (const site of sites) {
+          const point = project(site);
+          const dist = Math.hypot(point.x - x, point.y - y);
+          if (!best || dist < best.dist) best = { site, dist };
+        }
+        if (best && best.dist < 34 * (window.devicePixelRatio || 1)) {
+          els.site.value = best.site.id;
+          plan();
+          drawMap();
+        }
+      }
+
+      async function plan() {
+        const site = selectedSite();
+        const count = Math.max(1, Math.min(8, Number(els.count.value) || 2));
+        const options = {
+          fetch: els.mode.value === "mock" ? mockFetch : fetch,
+          includeDualPol: els.dualPol.checked,
+        };
+        els.status.textContent = "Planning CHMI task-volume frames...";
+        drawMap();
+        try {
+          const [plans, frames] = await Promise.all([
+            recentInternationalFramePlans("chmi", site.id, count, options),
+            recentInternationalFrames("chmi", site.id, count, options),
+          ]);
+          els.status.textContent = JSON.stringify({
+            provider: "chmi",
+            site,
+            siteCatalog: chmiSiteCatalogUrl(site.id),
+            reflectivityFiles: chmiProductHdf5ListingUrl(site.id, "vol_z"),
+            velocityFiles: chmiProductHdf5ListingUrl(site.id, "vol_v"),
+            plans: plans.map((plan) => ({
+              identity: plan.identity,
+              volumeTime: plan.volumeTime,
+              merge: plan.merge,
+              partCount: plan.parts.length,
+              products: plan.sourceItem?.products?.map((product) => ({
+                productDir: product.productDir,
+                taskCount: product.taskCount,
+                tasks: product.files.map((file) => file.task).join(""),
+              })),
+            })),
+            frames: frames.map((frame) => ({
+              id: frame.id,
+              cacheKey: frame.cacheKey,
+              volumeTime: frame.volumeTime,
+              merge: frame.merge,
+              urlCount: frame.urls?.length || 0,
+              site: frame.internationalSite,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = `CHMI planner failed: ${error.message || error}`;
+        }
+      }
+
+      els.plan.addEventListener("click", plan);
+      els.site.addEventListener("change", () => { drawMap(); plan(); });
+      els.dualPol.addEventListener("change", plan);
+      els.mode.addEventListener("change", plan);
+      els.map.addEventListener("click", clickSite);
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+      plan();
+    </script>
+  </body>
+</html>

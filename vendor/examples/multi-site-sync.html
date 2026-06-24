@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Multi-Site Sync Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #0d0e10;
+        color: #f2f4f5;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+        overflow-x: auto;
+      }
+
+      header {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      input,
+      select,
+      button {
+        min-height: 32px;
+      }
+
+      input {
+        width: 180px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, 384px);
+        gap: 12px;
+      }
+
+      figure {
+        margin: 0;
+      }
+
+      canvas {
+        width: 384px;
+        height: 384px;
+        background: #030606;
+        border: 1px solid #38444a;
+      }
+
+      figcaption,
+      pre {
+        color: #cbd4d8;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <input id="sites" value="KTLX KFWS KINX" />
+        <select id="product">
+          <option>REF</option>
+          <option>DVEL</option>
+          <option>SRV</option>
+          <option>AZSHR</option>
+        </select>
+        <button id="load">Load synced loop</button>
+        <button id="prev">Prev</button>
+        <button id="next">Next</button>
+      </header>
+      <div id="grid" class="grid"></div>
+      <pre id="status">ready</pre>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        sites: document.getElementById("sites"),
+        product: document.getElementById("product"),
+        load: document.getElementById("load"),
+        prev: document.getElementById("prev"),
+        next: document.getElementById("next"),
+        grid: document.getElementById("grid"),
+        status: document.getElementById("status"),
+      };
+      let multiLoop = null;
+      let index = 0;
+
+      els.load.addEventListener("click", load);
+      els.product.addEventListener("change", async () => {
+        if (!multiLoop) return load();
+        els.status.textContent = `rerender ${els.product.value}`;
+        multiLoop = await toolbox.rerenderMultiSiteLoop(multiLoop, { product: els.product.value });
+        draw();
+      });
+      els.prev.addEventListener("click", () => step(-1));
+      els.next.addEventListener("click", () => step(1));
+
+      async function load() {
+        els.load.disabled = true;
+        try {
+          els.status.textContent = "loading synced loops";
+          const sites = els.sites.value.trim().split(/[,\s]+/).filter(Boolean);
+          multiLoop = await toolbox.loadMultiSiteLoop(sites, {
+            mode: "live",
+            product: els.product.value,
+            frameCount: 3,
+            width: 384,
+            height: 384,
+            rangeKm: 180,
+            maxSkewMs: 6 * 60_000,
+            concurrency: 3,
+          });
+          index = multiLoop.length - 1;
+          mountCanvases();
+          draw();
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+
+      function mountCanvases() {
+        els.grid.innerHTML = "";
+        for (const site of multiLoop.sites) {
+          const figure = document.createElement("figure");
+          figure.innerHTML = `<canvas width="384" height="384"></canvas><figcaption></figcaption>`;
+          figure.dataset.site = site;
+          els.grid.appendChild(figure);
+        }
+      }
+
+      function draw() {
+        if (!multiLoop) return;
+        for (const figure of els.grid.querySelectorAll("figure")) {
+          const site = figure.dataset.site;
+          const frame = multiLoop.frame(site, index);
+          const caption = figure.querySelector("figcaption");
+          if (frame) {
+            drawFrameToCanvas(figure.querySelector("canvas"), frame);
+            caption.textContent = `${site} ${frame.frame.source} ${frame.frame.volumeTime || frame.frame.id}`;
+          } else {
+            caption.textContent = `${site} missing at this sync time`;
+          }
+        }
+        const slot = multiLoop.slot(index);
+        const layers = multiLoop.textureLayers(index);
+        els.status.textContent = [
+          `${slot.time || `slot ${index + 1}`}  ${index + 1}/${multiLoop.length}`,
+          `${multiLoop.sites.join(", ")}  ${multiLoop.product}`,
+          `${layers.length} georeferenced texture layers`,
+          `complete=${slot.complete}`,
+        ].join("\\n");
+      }
+
+      function step(delta) {
+        if (!multiLoop?.length) return;
+        index = (index + delta + multiLoop.length) % multiLoop.length;
+        draw();
+      }
+
+      load();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,16 @@
+The live radar engine is intentionally not duplicated in this handoff archive.
+
+macOS / Linux:
+  ./scripts/vendor-bowecho.sh
+
+Windows PowerShell:
+  .\scripts\vendor-bowecho.ps1
+
+The script downloads the pinned BowEcho radar toolbox browser release, copies
+its JavaScript worker and WebAssembly assets here, verifies the expected files,
+and preserves the upstream MIT and Apache-2.0 licenses. It also vendors the
+h5wasm files used by the optional client-side GOES GLM layer.
+
+`demo.html` is a self-contained synthetic preview. `index.html` becomes the live
+Meowdar workstation after this one-time vendor step and should be served over
+HTTP rather than opened from a local file URL.

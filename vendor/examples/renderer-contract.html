@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Renderer Contract Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #0b0d0f;
+        color: #e8edf0;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(320px, 520px) minmax(360px, 1fr);
+        gap: 16px;
+        align-items: start;
+      }
+
+      canvas {
+        width: 512px;
+        height: 512px;
+        max-width: 100%;
+        background: #050606;
+        border: 1px solid #38444a;
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px;
+        min-height: 512px;
+        overflow: auto;
+        background: #11171a;
+        border: 1px solid #38444a;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <canvas id="radar" width="512" height="512"></canvas>
+      <pre id="metadata">loading</pre>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const canvas = document.getElementById("radar");
+      const metadata = document.getElementById("metadata");
+
+      const loop = await toolbox.loadLoop({
+        site: "KTLX",
+        mode: "live",
+        product: "REF",
+        frameCount: 3,
+        width: 512,
+        height: 512,
+        rangeKm: 230,
+      });
+      const frame = loop.frame(loop.length - 1);
+      drawFrameToCanvas(canvas, frame);
+
+      const texture = toolbox.textureLayer(frame, { site: loop.site });
+      const sites = toolbox.sitesGeoJson({ query: "KTLX" });
+      metadata.textContent = JSON.stringify({
+        texture: withoutPixels(texture),
+        sites,
+      }, null, 2);
+
+      function withoutPixels(texture) {
+        return {
+          ...texture,
+          frame: {
+            ...texture.frame,
+            urlCount: texture.frame.urls?.length || (texture.frame.url ? 1 : 0),
+            url: undefined,
+            urls: undefined,
+          },
+          image: {
+            width: texture.image.width,
+            height: texture.image.height,
+            rgbaBytes: texture.image.rgba.byteLength,
+            hasImageData: Boolean(texture.image.imageData),
+          },
+        };
+      }
+    </script>
+  </body>
+</html>

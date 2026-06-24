@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Multi-Site Composite Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #101417;
+        color: #edf3f5;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      button {
+        min-height: 32px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 768px minmax(360px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+
+      canvas {
+        width: 768px;
+        height: 768px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      pre {
+        margin: 0;
+        color: #d4dde1;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 1180px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          width: min(768px, 100%);
+          height: auto;
+          aspect-ratio: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="run">Build multi-site composite</button>
+      </header>
+      <div class="grid">
+        <canvas id="radar" width="768" height="768"></canvas>
+        <pre id="status">ready</pre>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        WORKER_VERSION,
+        createRadarToolbox,
+        drawCompositeToCanvas,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        run: document.getElementById("run"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+      };
+
+      els.run.addEventListener("click", runComposite);
+      runComposite();
+
+      async function runComposite() {
+        els.run.disabled = true;
+        try {
+          els.status.textContent = "configuring cache";
+          await toolbox.configureCache({ bytes: 40, volumes: 32, renders: 220 });
+
+          els.status.textContent = "loading synchronized KTLX/KFWS loops";
+          const multiLoop = await toolbox.loadMultiSiteLoop(["KTLX", "KFWS"], {
+            mode: "live",
+            product: "REF",
+            frameCount: 1,
+            width: 512,
+            height: 512,
+            rangeKm: 230,
+            maxSkewMs: 10 * 60_000,
+          });
+
+          els.status.textContent = "compositing radar textures";
+          const composite = toolbox.compositeLoopSlot(multiLoop, multiLoop.length - 1, {
+            width: 768,
+            height: 768,
+            blendMode: "source-over",
+          });
+          drawCompositeToCanvas(els.radar, composite);
+
+          els.status.textContent = JSON.stringify({
+            workerVersion: WORKER_VERSION,
+            composite: {
+              type: composite.type,
+              width: composite.image.width,
+              height: composite.image.height,
+              blendMode: composite.blendMode,
+              counts: composite.counts,
+              bounds: composite.bounds,
+            },
+            layers: composite.layers.map((layer) => ({
+              site: layer.site.id,
+              product: layer.product,
+              source: layer.source,
+              width: layer.width,
+              height: layer.height,
+              sampledPixels: layer.sampledPixels,
+            })),
+            canvas: {
+              width: els.radar.width,
+              height: els.radar.height,
+              clientWidth: els.radar.clientWidth,
+              clientHeight: els.radar.clientHeight,
+            },
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.run.disabled = false;
+        }
+      }
+    </script>
+  </body>
+</html>

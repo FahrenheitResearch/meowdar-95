@@ -1,0 +1,340 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho DMI International Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px;
+      }
+
+      select,
+      input,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      select {
+        min-width: 230px;
+      }
+
+      input {
+        width: 64px;
+      }
+
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 430px;
+        gap: 8px;
+      }
+
+      .map-panel {
+        padding: 6px;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 680px);
+        min-height: 400px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      aside {
+        padding: 8px;
+        min-width: 0;
+      }
+
+      pre {
+        margin: 0;
+        height: calc(min(70vh, 680px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        padding: 8px;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      @media (max-width: 1120px) {
+        main {
+          padding: 6px;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 52vh;
+          min-height: 320px;
+        }
+
+        pre {
+          height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho DMI ODIM Planner</div>
+        <div class="toolbar">
+          <select id="site"></select>
+          <input id="count" type="number" min="1" max="12" value="4" />
+          <select id="mode">
+            <option value="mock">Mock STAC items</option>
+            <option value="live">Live CORS probe</option>
+          </select>
+          <button id="plan">Plan</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window map-panel">
+          <canvas id="map" width="980" height="640"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status"></pre>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        dmiVolumeItemsUrl,
+        internationalRadarSites,
+        recentInternationalFramePlans,
+        recentInternationalFrames,
+      } from "../radar-toolbox.js?v=dmi-planner1";
+
+      const sites = internationalRadarSites({ providerId: "dmi" });
+      const els = {
+        site: document.getElementById("site"),
+        count: document.getElementById("count"),
+        mode: document.getElementById("mode"),
+        plan: document.getElementById("plan"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+      };
+      const ctx = els.map.getContext("2d");
+      let selectedSite = sites.find((site) => site.id === "06177") || sites[0];
+
+      for (const site of sites) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} - ${site.label}`;
+        els.site.appendChild(option);
+      }
+      els.site.value = selectedSite.id;
+
+      els.site.addEventListener("change", () => {
+        selectedSite = sites.find((site) => site.id === els.site.value) || sites[0];
+        draw();
+      });
+      els.plan.addEventListener("click", planSite);
+      els.map.addEventListener("click", pickSite);
+      window.addEventListener("resize", resize);
+      resize();
+      planSite();
+
+      async function planSite() {
+        const count = Math.max(1, Math.min(12, Number(els.count.value) || 4));
+        const options = els.mode.value === "mock" ? { fetch: mockDmiFetch(selectedSite, count) } : {};
+        els.status.textContent = "planning...";
+        draw();
+        try {
+          const plans = await recentInternationalFramePlans("dmi", selectedSite.id, count, options);
+          const frames = await recentInternationalFrames("dmi", selectedSite.id, count, options);
+          els.status.textContent = JSON.stringify({
+            provider: "dmi",
+            site: selectedSite,
+            query: dmiVolumeItemsUrl(selectedSite.id, { limit: count }),
+            plans: plans.map((plan) => ({
+              identity: plan.identity,
+              volumeTime: plan.volumeTime,
+              merge: plan.merge,
+              parts: plan.parts,
+            })),
+            frames: frames.map((frame) => ({
+              id: frame.id,
+              cacheKey: frame.cacheKey,
+              identity: frame.identity,
+              url: frame.url,
+              volumeTime: frame.volumeTime,
+              site: frame.internationalSite,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error?.message || error);
+        }
+      }
+
+      function mockDmiFetch(site, count) {
+        const newest = new Date("2026-06-12T06:40:00Z");
+        const prefix = site.label.slice(0, 5).toLowerCase().replace(/[^a-z0-9]/g, "") || "dmi";
+        const features = [];
+        for (let index = 0; index < count; index += 1) {
+          const at = new Date(newest.getTime() - index * 5 * 60_000);
+          const iso = at.toISOString();
+          const stamp = `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}${iso.slice(11, 13)}${iso.slice(14, 16)}`;
+          const id = `${prefix}_${stamp}.vol.h5`;
+          features.push({
+            id,
+            properties: { stationId: site.id },
+            asset: { data: { href: `https://dmi.example/download/${id}` } },
+          });
+        }
+        return async (url) => ({
+          ok: String(url).includes("radardata/collections/volume/items"),
+          status: String(url).includes("radardata/collections/volume/items") ? 200 : 404,
+          statusText: String(url).includes("radardata/collections/volume/items") ? "OK" : "Not Found",
+          text: async () => JSON.stringify({ type: "FeatureCollection", features }),
+        });
+      }
+
+      function resize() {
+        const rect = els.map.getBoundingClientRect();
+        els.map.width = Math.max(320, Math.round(rect.width));
+        els.map.height = Math.max(260, Math.round(rect.height));
+        draw();
+      }
+
+      function draw() {
+        const width = els.map.width;
+        const height = els.map.height;
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#0d1518";
+        ctx.fillRect(0, 0, width, height);
+        drawGrid(width, height);
+        ctx.strokeStyle = "#29575c";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const outline = [
+          [8.1, 54.6], [10.6, 54.6], [12.9, 54.8], [15.2, 55.0],
+          [15.0, 55.4], [13.0, 55.7], [12.3, 56.1], [10.5, 57.8],
+          [8.2, 57.3], [8.1, 54.6],
+        ];
+        for (const [lon, lat] of outline) {
+          const point = project(lon, lat, width, height);
+          if (lon === outline[0][0] && lat === outline[0][1]) ctx.moveTo(point.x, point.y);
+          else ctx.lineTo(point.x, point.y);
+        }
+        ctx.stroke();
+        for (const site of sites) {
+          const point = project(site.lon, site.lat, width, height);
+          const active = site.id === selectedSite.id;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, active ? 8 : 5, 0, Math.PI * 2);
+          ctx.fillStyle = active ? "#ffff00" : "#ffbf4a";
+          ctx.fill();
+          ctx.strokeStyle = "#000000";
+          ctx.stroke();
+        }
+      }
+
+      function drawGrid(width, height) {
+        ctx.strokeStyle = "#243134";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += 80) {
+          ctx.beginPath();
+          ctx.moveTo(x, 0);
+          ctx.lineTo(x, height);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += 80) {
+          ctx.beginPath();
+          ctx.moveTo(0, y);
+          ctx.lineTo(width, y);
+          ctx.stroke();
+        }
+      }
+
+      function pickSite(event) {
+        const rect = els.map.getBoundingClientRect();
+        const x = ((event.clientX - rect.left) / rect.width) * els.map.width;
+        const y = ((event.clientY - rect.top) / rect.height) * els.map.height;
+        let best = null;
+        for (const site of sites) {
+          const point = project(site.lon, site.lat, els.map.width, els.map.height);
+          const distance = Math.hypot(point.x - x, point.y - y);
+          if (distance <= 18 && (!best || distance < best.distance)) best = { site, distance };
+        }
+        if (!best) return;
+        selectedSite = best.site;
+        els.site.value = selectedSite.id;
+        planSite();
+      }
+
+      function project(lon, lat, width, height) {
+        const west = 7.6;
+        const east = 15.8;
+        const south = 54.3;
+        const north = 58.0;
+        return {
+          x: ((lon - west) / (east - west)) * width,
+          y: ((north - lat) / (north - south)) * height,
+        };
+      }
+    </script>
+  </body>
+</html>

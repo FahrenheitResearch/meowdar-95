@@ -1,0 +1,154 @@
+# AI Handoff Prompt
+
+Use this when handing the bundle to another AI or developer.
+
+```text
+You have a self-contained BowEcho-derived browser radar toolbox.
+
+Do not rewrite the radar decoder, Level II data fetcher, product engine, or caching system. Use `web/radar-toolbox.js`. TypeScript declarations live in `web/radar-toolbox.d.ts`, and the package metadata is in `web/package.json`.
+
+Build any UI style you want around this API:
+- `createRadarToolbox()`
+- `createRadarSession(toolbox, options)` / `toolbox.createSession(options)`
+- `session.load(options)`, `session.setSite(site)`, `session.setProduct(product)`, `session.setCut(cut)`
+- `session.warm(["DVEL", "SRV"], options)`, `session.poll()`, `session.play()`, `session.stop()`
+- `session.cutChoices()`, `session.timeline()`, `session.snapshot().capabilities`, `session.currentFrame()`, `session.textureLayer(index)`
+- `toolbox.configureCache({ volumes, renders, bytes })`
+- `toolbox.loadLoop({ site, mode, product, frameCount, width, height, rangeKm })`
+- `toolbox.warmLoop(loop, { product, metadata, concurrency })`
+- `toolbox.rerenderLoop(loop, { product, cut, rangeKm, width, height, smoothing })`
+- `toolbox.pollLive(loop)`
+- `toolbox.archiveFramesForDate(site, date, options)`
+- `toolbox.archiveLoopFramesForDate(site, date, { targetTime, frameCount })`
+- `toolbox.loadArchiveLoop(site, date, { targetTime, frameCount, product, width, height })`
+- `toolbox.spcConvectiveDate(date)`, `toolbox.spcReportTimeUtc(convectiveDate, hhmm)`, `toolbox.spcReportsUrls(convectiveDate, options)`
+- `toolbox.spcWcmTornadoYearUrl(year, options)`, `toolbox.spcActualTornadoesUrl(endYear, options)`
+- `toolbox.spcOutlookKinds()`, `toolbox.spcOutlookLiveUrls(day, kind, options)`, `toolbox.spcOutlookArchiveUrls(date, day, kind, options)`, `toolbox.spcOutlookUrls(day, kind, options)`
+- `toolbox.parseSpcOutlook(textOrJson, options)`, `toolbox.spcOutlookFeatureCollection(outlookOrFeatures, options)`, `toolbox.fetchSpcOutlook(day, kind, options)`, `toolbox.fetchSpcOutlooks(kinds, options)`
+- `toolbox.parseSpcReports(kind, convectiveDate, csv)`, `toolbox.parseSpcReportsCombined(convectiveDate, csv)`, `toolbox.parseSpcTornadoSegments(convectiveDate, csv)`, `toolbox.tornadoSegmentsFromReports(reports)`
+- `toolbox.fetchSpcEventDay(convectiveDate, options)`, `toolbox.estimatedTornadoTrackEndTime(beginTime, lengthMi, options)`, `toolbox.selectEventRadarSites(begin, end, options)`
+- `toolbox.eventArchiveFrameWindow(frames, options)`, `toolbox.eventArchivePlanForTrack(segmentOrReport, options)`
+- `toolbox.supportedByteFormats()`
+- `toolbox.supportedArchiveFormats()`
+- `toolbox.frameProviders()`
+- `toolbox.isZipBytes(bytes)`, `toolbox.parseZipDirectory(bytes, options)`, `toolbox.extractMobileArchiveEntries(bytes, options)`
+- `toolbox.sniffBytes(bytes)`
+- `toolbox.importBytesFrame(bytes, options)`
+- `toolbox.importFileFrame(file, options)`
+- `toolbox.importMobileArchiveFrame(fileOrBytes, options)`
+- `toolbox.frameFromUrl(url, options)`
+- `toolbox.loadImportedLoop([imported], options)`
+- `toolbox.volumeDiagnostics(frame, options)`
+- `toolbox.volumeDiagnosticsLoop(loop, options)`
+- `toolbox.internationalRadarProvider(providerId)`, `toolbox.internationalRadarSite(providerId, siteId)`
+- `toolbox.smhiQcvolCatalogUrl(siteId, options)`, `toolbox.parseSmhiQcvolCatalog(siteId, textOrJson)`, `toolbox.smhiFramePlansFromCatalog(siteId, textOrJson)`
+- `toolbox.s3StyleListingUrl(baseUrl, options)`, `toolbox.parseS3StyleListing(textOrListing)`
+- `toolbox.nexradArchiveDatePrefix(site, date)`, `toolbox.nexradArchiveListingUrl(site, date, options)`, `toolbox.parseNexradArchiveListing(site, date, textOrListing)`, `toolbox.archiveFrameWindow(frames, options)`
+- `toolbox.geosphereVolumeListingUrl(options)`, `toolbox.parseGeosphereVolumeListing(textOrListing)`, `toolbox.geosphereFramePlansFromListing(textOrListing)`
+- `toolbox.parseAutoIndexListing(textOrEntries)`
+- `toolbox.shmuVolumeRootUrl(options)`, `toolbox.shmuSiteCatalogUrl(siteId, options)`, `toolbox.shmuProductCatalogUrl(siteId, product, options)`, `toolbox.shmuProductDateListingUrl(siteId, product, date, options)`
+- `toolbox.parseShmuDateListing(textOrEntries)`, `toolbox.parseShmuFileListing(siteId, product, date, textOrEntries)`, `toolbox.shmuFramePlanFromProductFiles(siteId, filesByProduct)`, `toolbox.shmuFramePlansFromProductFiles(siteId, filesByProduct)`
+- `toolbox.dwdSitesRootUrl(options)`, `toolbox.dwdProductCatalogUrl(productDir, options)`, `toolbox.dwdProductStationCatalogUrl(siteId, productDir, options)`, `toolbox.dwdProductHdf5CatalogUrl(siteId, productDir, options)`, `toolbox.dwdProductSweepListingUrl(siteId, productDir, variant, options)`
+- `toolbox.parseDwdSweepListing(siteId, productDir, quantity, textOrEntries)`, `toolbox.dwdFramePlanFromProductSweeps(siteId, sweepsByProduct)`, `toolbox.dwdFramePlansFromProductSweeps(siteId, sweepsByProduct)`
+- `toolbox.chmiSitesRootUrl(options)`, `toolbox.chmiSiteCatalogUrl(siteId, options)`, `toolbox.chmiProductCatalogUrl(siteId, productDir, options)`, `toolbox.chmiProductHdf5ListingUrl(siteId, productDir, options)`
+- `toolbox.parseChmiFileListing(siteId, productDir, textOrEntries)`, `toolbox.chmiFramePlanFromProductFiles(siteId, filesByProduct)`, `toolbox.chmiFramePlansFromProductFiles(siteId, filesByProduct)`
+- `toolbox.jmaRadarBaseUrl(options)`, `toolbox.jmaTarUrl(product, stampOrDate, options)`, `toolbox.jmaCandidateStamps(nowOrOptions, options)`, `toolbox.jmaFramePlanFromStamp(siteId, stampOrDate, options)`
+- `toolbox.ordBucketBaseUrl(options)`, `toolbox.ordObjectKinds(siteId, options)`, `toolbox.ordHourPrefix(siteId, objectKind, hourOrDate)`, `toolbox.ordHourListingUrl(siteId, objectKind, hourOrDate, options)`
+- `toolbox.parseOrdObjectKey(siteId, key)`, `toolbox.ordFramePlanFromKeys(siteId, objectKind, keysOrListing)`, `toolbox.ordFramePlansFromKeys(siteId, objectKind, keysOrListing)`
+- `toolbox.fmiCatalogListingUrl(options)`, `toolbox.fmiRadarVolumeListingUrl(siteId, options)`, `toolbox.parseFmiVolumeListing(siteId, textOrListing)`
+- `toolbox.latestInternationalFramePlan(providerId, siteId, options)`, `toolbox.recentInternationalFramePlans(providerId, siteId, count, options)`
+- `toolbox.latestInternationalFrame(providerId, siteId, options)`, `toolbox.recentInternationalFrames(providerId, siteId, count, options)`
+- `toolbox.loadInternationalLoop(providerId, siteId, options)`
+- `toolbox.pollInternationalLive(loop, options)`
+- `toolbox.communityRadarFeeds(options)`, `toolbox.communityRadarFeed(feedOrId)`, `toolbox.communityRadarMarkers(options)`
+- `toolbox.normalizeCustomPollUrl(input)`, `toolbox.pollUrlsMatch(left, right)`, `toolbox.pollUrlName(url)`
+- `toolbox.parseCustomPollMarkerInputs(lat, lon)`, `toolbox.customPollEntryLatLon(entry)`, `toolbox.customPollEntryLabel(entry)`
+- `toolbox.parseCustomRadarGis(text)`, `toolbox.customPollUrlForGisSite(baseUrl, siteId)`, `toolbox.customPollLinksFromGis(text, baseUrl)`
+- `toolbox.normalizeCustomPollLink(entry)`, `toolbox.upsertCustomPollLink(links, entry)`, `toolbox.customPollLinkFeed(entry)`, `toolbox.customPollLinksAsFeeds(entries)`
+- `toolbox.customPollMarkers(entries)`, `toolbox.customPollLinksGeoJson(entries)`
+- `toolbox.fetchCommunityDirList(feedOrId, options)`
+- `toolbox.latestCommunityFrame(feedOrId, options)`, `toolbox.recentCommunityFrames(feedOrId, count, options)`
+- `toolbox.loadCommunityLoop(feedOrId, options)`
+- `toolbox.pollCommunityLive(loop, options)`
+- `toolbox.sitesGeoJson()`
+- `toolbox.radarSourceCatalog()`
+- `toolbox.globalRadarSites({ sources })`
+- `toolbox.globalRadarSitesGeoJson({ sources })`
+- `toolbox.mapboxGlobalRadarSiteSource({ sources })`
+- `toolbox.deckGlobalRadarSiteScatterplotLayerProps({ sources })`
+- `toolbox.nearestRadarSite({ lon, lat }, options)`
+- `toolbox.radarSiteSourceSummary({ sources })`
+- `toolbox.textureLayer(loop.frame(index), { site: loop.site })`
+- `toolbox.loopTextureLayers(loop)`
+- `toolbox.mapboxCanvasSource(layer, canvas)`
+- `toolbox.mapboxRasterLayer(layer, { sourceId, layerId })`
+- `toolbox.deckBitmapLayerProps(layer)`
+- `toolbox.webGpuTextureUpload(layer)`
+- `toolbox.mapView(options)`, `toolbox.fitMapViewToLayer(layer, options)`
+- `toolbox.panMapView(view, delta)`, `toolbox.zoomMapView(view, zoomDelta, options)`
+- `toolbox.mapTileCover(view, { urlTemplate })`
+- `toolbox.radarLayerQuadMesh(layer, view)`
+- `toolbox.compositeLayers(layers, options)`
+- `toolbox.compositeLoopSlot(multiLoop, index, options)`
+- `drawCompositeToCanvas(canvas, compositeLayer)`
+- `toolbox.renderCrossSectionLoop(loop, { start, end, width, height, topKm })`
+- `toolbox.crossSectionPanel(sectionLoop.section(index), { site: loop.site })`
+- `toolbox.loopCrossSectionPanels(sectionLoop)`
+- `toolbox.analyzeLoop(loop)`
+- `toolbox.analysisOverlay(analysisLoop.analysis(index), { site: loop.site })`
+- `toolbox.loopAnalysisOverlays(analysisLoop)`
+- `toolbox.renderTorTracksLoop(loop, { halfExtentKm: 150, cellKm: 0.5 })`
+- `toolbox.torTracksLayer(torTracksLoop.frame(index), { site: loop.site })`
+- `toolbox.loopTorTracksLayers(torTracksLoop)`
+- `toolbox.loadMultiSiteLoop(["KTLX", "KFWS"], options)`
+- `toolbox.rerenderMultiSiteLoop(multiLoop, options)`
+- `toolbox.pollMultiSiteLive(multiLoop)`
+- `toolbox.product(product)`, `toolbox.productCapability(product)`, `toolbox.productChoices(metaOrLoop)`, `toolbox.capabilityHints(metaOrLoop)`, `toolbox.cutChoices(metaOrLoop)`, `toolbox.loopTimeline(loop)`
+- `toolbox.parsePalette(fileText, { name })`
+- `toolbox.exportPalette(palette)`
+- `toolbox.paletteBinding(palette, productOrFamily)`
+- `toolbox.createPaletteStore({ key })`
+- `toolbox.palettePreviewCss(palette)`
+- `drawFrameToCanvas(canvas, loop.frame(index))`
+- `drawCrossSectionToCanvas(canvas, sectionLoop.section(index))`
+- `drawTorTracksToCanvas(canvas, torTracksLoop.frame(index))`
+- `drawRadarLayerToCanvas(canvas, layer)`
+- `RADAR_SITES`
+- `PRODUCT_CATALOG`
+
+Hard requirements:
+- All Level II fetch/decode/render work must happen client-side in the browser worker/WASM path.
+- Local files, mobile/research ZIP archives, provider byte buffers, and CORS-enabled custom URLs must use the import/provider APIs. Do not unzip or decode radar files on a server unless the user explicitly asks for server processing.
+- Do not downscale radar resolution. Set the canvas backing store to the exact render size.
+- Product/tilt/range changes must use `rerenderLoop`, not `loadLoop`.
+- For ordinary single-radar websites, prefer `toolbox.createSession()` so site selection, arbitrary displayable tilt selection, product changes, loop playback, cache warming, and live polling stay on one state machine.
+- Session product/tilt changes must use `session.setProduct()` / `session.setCut()`; do not call `session.load()` for every control change.
+- Product buttons and tilt lists must be driven from `session.snapshot().capabilities`, `toolbox.productChoices(metaOrLoop)`, and `toolbox.cutChoices(metaOrLoop)`; do not hardcode availability or show unavailable products as clickable.
+- Global map/source pickers must use `radarSourceCatalog`, `globalRadarSites`, `globalRadarSitesGeoJson`, and `nearestRadarSite`; do not invent a partial radar-site table when the SDK carries the BowEcho NEXRAD, international, community, and caller-provided custom marker catalogs.
+- Current first-class client-side live loop loading is NEXRAD, CORS-enabled community/custom GR2A `dir.list` feeds, SMHI Sweden ODIM_H5 international frames, GeoSphere Austria ODIM_H5 international frames, SHMU Slovakia split ODIM_H5 international frames, DWD Germany sweep-merge ODIM_H5 international frames, CHMI Czechia task-merge ODIM_H5 international frames, JMA Japan GRIB2 tar frames, EUMETNET ORD ODIM_H5 frames, DMI Denmark ODIM_H5 international frames, and FMI Finland ODIM_H5 international frames. Other international source catalogs expose BowEcho provider/site metadata and supported formats; use import/custom-provider APIs for bytes until that provider has a browser planner.
+- SMHI, GeoSphere, SHMU, DWD, CHMI, JMA, ORD, DMI, and FMI international UIs must use `latestInternationalFramePlan`, `recentInternationalFramePlans`, `latestInternationalFrame`, `recentInternationalFrames`, `loadInternationalLoop`, and `pollInternationalLive`; do not uppercase SMHI/FMI/GeoSphere/SHMU/DWD/CHMI/ORD lowercase site ids, keep JMA site ids uppercase and four characters, do not drop leading zeros from DMI station ids, keep SHMU, DWD, CHMI, and split ORD files as `merge: true` frame parts instead of byte-concatenating them, never use DWD `LATEST` aliases as immutable frame URLs, keep CHMI task `Z/B/A` files inside the planner's freshness window, keep ORD PVOL/SCAN parts inside the planner's 5-minute cycle window, and preserve JMA `siteFilteredDecode: true` so the worker filters the shared tar to the selected station.
+- For JMA `loadInternationalLoop`, keep `product` for rendered products like `REF`; use `jmaProduct` or `sourceProduct` only for source tar products `N5`/`N6`.
+- Community feed UIs must plan frames with `fetchCommunityDirList`, `latestCommunityFrame`, `recentCommunityFrames`, `loadCommunityLoop`, and `pollCommunityLive`; do not poll `dir.list` with ad hoc string parsing.
+- Private/mobile/research GR2A feed UIs must save links with `normalizeCustomPollLink` / `upsertCustomPollLink`, import GR `customradars.gis` or `radars.gis` rows with `customPollLinksFromGis`, draw markers with `customPollMarkers` or `customPollLinksGeoJson`, convert selected links through `customPollLinkFeed`, and then use the same community frame planners. Do not write a separate GIS parser or custom poller.
+- Warm buttons should default to `session.snapshot().capabilities.recommendedWarmProducts` so generated UIs preheat products the current volume can actually render.
+- Bigger loops should configure enough decoded-volume/render cache capacity and use `warmLoop` after the initial load; do not clear caches during ordinary playback or product switching.
+- Auto-refresh must use `pollLive`, not blind reloads.
+- Archive/event replay must use `archiveFramesForDate`, `archiveLoopFramesForDate`, or `loadArchiveLoop`; do not manually construct NEXRAD S3 listings or download a whole day of radar bytes just to populate a timeline.
+- SPC outlook overlay UIs must use `fetchSpcOutlook`, `fetchSpcOutlooks`, `parseSpcOutlook`, and `spcOutlookFeatureCollection`; do not hardcode SPC issue URLs, skip the day-1 0100 pre-12Z fallback, or replace SPC's own fill/stroke colors.
+- SPC tornado-event replay UIs must use `fetchSpcEventDay`, `parseSpcReportsCombined`, `parseSpcTornadoSegments`, `tornadoSegmentsFromReports`, `selectEventRadarSites`, `eventArchiveFrameWindow`, and `eventArchivePlanForTrack`; do not hand-pick radars or event windows by rough state/market rules.
+- Mapbox, WebGL, wgpu, deck.gl, or custom map layers must use `textureLayer` / `loopTextureLayers` for georeferenced full-resolution radar textures.
+- Mapbox/MapLibre, deck.gl, and WebGPU glue must use the SDK adapter helpers; do not recalculate corner order, byte layout, or texture filter settings in UI code.
+- Custom map cameras and slippy-tile renderers must use `mapView`, `fitMapViewToLayer`, `panMapView`, `zoomMapView`, `mapTileCover`, and `radarLayerQuadMesh`; do not hand-roll Web Mercator pan/zoom, tile wrapping, antimeridian guards, or radar UV order.
+- Reconstructed vertical cross-section panels must use `renderCrossSectionLoop` / `crossSectionPanel`; endpoints may be radar-local km or lon/lat map points.
+- True native RHI/mobile-scan panels must use `renderNativeRhi` / `renderNativeRhiLoop` and leave `width`/`height` unset unless the user explicitly opts into `allowDownscale: true`.
+- Scan-mode badges, RHI/mobile-scan branching, diagnostics panels, and 3D buffer planning must use `volumeDiagnostics` / `volumeDiagnosticsLoop`; do not infer gate geometry from rendered canvas pixels.
+- Storm-cell and rotation markers must use `analyzeFrame` / `analyzeLoop` plus `analysisOverlay`; do not reimplement cell or mesocyclone/TVS detection in UI code.
+- Accumulated rotation tracks and TDS markers must use `renderTorTracksLoop` plus `torTracksLayer`; default to the 500 m grid unless the user explicitly asks for a different grid.
+- Side-by-side or multi-layer dashboards must use the synchronized multi-site API rather than independent timers per radar.
+- One-texture multi-radar maps must use `compositeLoopSlot` / `compositeLayers`; do not flatten by CSS-scaling separate canvases or downsampling source radar frames.
+- Drag/drop or custom-provider radar workflows must import once, keep the returned frame descriptor, and then reuse `loadImportedLoop` / `rerenderLoop` for product and tilt changes. ZIP radar archives should use `importMobileArchiveFrame` or `importFileFrame` auto-detect so each sweep stays a separate merge part.
+- Palette import/export, user-palette persistence, preview strips, and custom-palette rendering should use the SDK palette helpers, `createPaletteStore`, and the `palette` render option; do not invent product-family mapping or custom storage formats.
+- Before handing off a generated UI, run `npm test` from `web` to keep the SDK contract intact.
+- Keep map/site selection, product selection, arbitrary displayable tilt selection, live polling, and quick looping.
+- Treat `web/examples/dogfood-radar-app.html` as the compact end-to-end app reference, `web/examples/minimal-toolbox.html` as the smallest UI reference, `web/examples/radar-session-controller.html` as the site/product/tilt/live-loop controller reference, `web/examples/cache-warm.html` as the no-redownload/no-redecode cache reference, `web/examples/byte-import.html` as the local/provider byte and mobile-archive import reference, `web/examples/renderer-contract.html` as the map/texture contract reference, `web/examples/map-adapters.html` as the Mapbox/deck/WebGPU adapter reference, `web/examples/map-viewport.html` as the custom map camera/tile/quad/clickable-site reference, `web/examples/global-source-catalog.html` as the all-source provider/site catalog reference, `web/examples/spc-outlook-planner.html` as the SPC outlook polygon/live-archive URL reference, `web/examples/spc-event-planner.html` as the SPC event-day/tornado-track radar/archive planning reference, `web/examples/community-feed-planner.html` as the community GR2A frame-planning reference, `web/examples/custom-poll-links.html` as the saved custom GR2A poll-link/GIS import reference, `web/examples/international-smhi-planner.html` as the SMHI international frame-planning reference, `web/examples/international-geosphere-planner.html` as the GeoSphere international frame-planning reference, `web/examples/international-shmu-planner.html` as the SHMU split-volume international frame-planning reference, `web/examples/international-dwd-planner.html` as the DWD sweep-merge international frame-planning reference, `web/examples/international-chmi-planner.html` as the CHMI task-merge international frame-planning reference, `web/examples/international-jma-planner.html` as the JMA tar/station-filter international frame-planning reference, `web/examples/international-ord-planner.html` as the ORD PVOL/SCAN international frame-planning reference, `web/examples/international-dmi-planner.html` as the DMI international frame-planning reference, `web/examples/international-fmi-planner.html` as the FMI international frame-planning reference, `web/examples/multi-site-sync.html` as the synchronized loop reference, `web/examples/multi-site-composite.html` as the pixel-level multi-radar composite reference, `web/examples/palette-render.html` as the custom palette render reference, `web/examples/palette-store-editor.html` as the persisted palette picker/editor reference, `web/examples/cross-section-loop.html` as the reconstructed vertical section reference, `web/examples/native-rhi.html` as the native RHI/mobile-scan reference, `web/examples/volume-diagnostics.html` as the scan-mode/cut-geometry/3D-buffer diagnostics reference, `web/examples/analysis-overlay.html` as the analysis overlay reference, `web/examples/tor-tracks-loop.html` as the TOR tracks/TDS reference, and `docs/TOOLBOX_API.md` as the API contract.
+```

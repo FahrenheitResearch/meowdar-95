@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Radar Session Controller</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --edge-light: #ffffff;
+        --edge-mid: #808080;
+        --edge-dark: #111111;
+        --text: #101010;
+        --screen: #050706;
+        --accent: #003f7f;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: #008080;
+        color: var(--text);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-columns: 240px 768px minmax(280px, 1fr);
+        gap: 8px;
+        padding: 8px;
+        align-items: start;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid var(--edge-dark);
+        box-shadow:
+          inset 1px 1px 0 var(--edge-light),
+          inset -1px -1px 0 var(--edge-mid);
+      }
+
+      .title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 24px;
+        padding: 3px 5px;
+        background: var(--accent);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .body {
+        padding: 8px;
+      }
+
+      .stack {
+        display: grid;
+        gap: 8px;
+      }
+
+      label {
+        display: grid;
+        gap: 3px;
+      }
+
+      select,
+      input,
+      button {
+        min-height: 26px;
+        color: #000000;
+        background: #ffffff;
+        border: 2px solid var(--edge-dark);
+        box-shadow:
+          inset 1px 1px 0 var(--edge-light),
+          inset -1px -1px 0 var(--edge-mid);
+        font: inherit;
+      }
+
+      button {
+        background: var(--panel);
+        cursor: pointer;
+      }
+
+      button:active {
+        box-shadow:
+          inset 1px 1px 0 var(--edge-dark),
+          inset -1px -1px 0 var(--edge-light);
+        transform: translate(1px, 1px);
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+      }
+
+      .wide {
+        grid-column: 1 / -1;
+      }
+
+      canvas {
+        display: block;
+        width: 768px;
+        height: 768px;
+        background: var(--screen);
+        border: 2px solid var(--edge-dark);
+        image-rendering: pixelated;
+      }
+
+      pre {
+        min-height: 740px;
+        margin: 0;
+        padding: 8px;
+        background: #ffffff;
+        color: #111111;
+        border: 2px solid var(--edge-dark);
+        box-shadow:
+          inset 1px 1px 0 var(--edge-mid),
+          inset -1px -1px 0 var(--edge-light);
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 1320px) {
+        main {
+          grid-template-columns: 240px 768px;
+        }
+
+        .status-window {
+          grid-column: 1 / -1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="title">Radar</div>
+        <div class="body stack">
+          <label>
+            Site
+            <select id="site"></select>
+          </label>
+          <label>
+            Product
+            <select id="product"></select>
+          </label>
+          <label>
+            Tilt
+            <select id="cut"></select>
+          </label>
+          <label>
+            Frames
+            <input id="frameCount" type="number" min="1" max="20" value="4" />
+          </label>
+          <div class="row">
+            <button id="load">Load</button>
+            <button id="poll">Live</button>
+            <button id="warm">Warm</button>
+          </div>
+          <div class="row">
+            <button id="prev">Prev</button>
+            <button id="play">Play</button>
+            <button id="next">Next</button>
+          </div>
+          <label class="wide">
+            Loop speed
+            <input id="speed" type="range" min="25" max="400" step="25" value="150" />
+          </label>
+        </div>
+      </section>
+
+      <section class="window">
+        <div class="title">Display</div>
+        <div class="body">
+          <canvas id="radar" width="768" height="768"></canvas>
+        </div>
+      </section>
+
+      <section class="window status-window">
+        <div class="title">State</div>
+        <div class="body">
+          <pre id="status">ready</pre>
+        </div>
+      </section>
+    </main>
+
+    <script type="module">
+      import {
+        PRODUCT_CATALOG,
+        RADAR_SITES,
+        WORKER_VERSION,
+        createRadarToolbox,
+        drawFrameToCanvas,
+      } from "../radar-toolbox.js?v=2026-06-13-capabilities1";
+
+      const toolbox = createRadarToolbox();
+      const session = toolbox.createSession({
+        site: "KTLX",
+        mode: "live",
+        product: "REF",
+        frameCount: 4,
+        width: 768,
+        height: 768,
+        rangeKm: 230,
+        loopSpeedPercent: 150,
+        pollIntervalMs: 60000,
+      });
+
+      const els = {
+        site: document.getElementById("site"),
+        product: document.getElementById("product"),
+        cut: document.getElementById("cut"),
+        frameCount: document.getElementById("frameCount"),
+        speed: document.getElementById("speed"),
+        load: document.getElementById("load"),
+        poll: document.getElementById("poll"),
+        warm: document.getElementById("warm"),
+        prev: document.getElementById("prev"),
+        play: document.getElementById("play"),
+        next: document.getElementById("next"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+      };
+
+      for (const site of RADAR_SITES) {
+        els.site.add(new Option(`${site.id} ${site.name}`, site.id, site.id === "KTLX", site.id === "KTLX"));
+      }
+      for (const product of PRODUCT_CATALOG) {
+        els.product.add(new Option(`${product.label} ${product.name}`, product.id, product.id === "REF", product.id === "REF"));
+      }
+
+      let latestCutSignature = "";
+      let lastSnapshot = null;
+      session.subscribe((state) => {
+        lastSnapshot = state;
+        els.play.textContent = state.playing ? "Stop" : "Play";
+        els.site.value = state.site;
+        updateProductSelect(state);
+        els.frameCount.value = state.frameCount;
+        els.speed.value = state.loopSpeedPercent;
+        updateCutSelect(state);
+        const frame = session.currentFrame();
+        if (frame) drawFrameToCanvas(els.radar, frame);
+        els.status.textContent = JSON.stringify({
+          workerVersion: WORKER_VERSION,
+          status: state.status,
+          site: state.site,
+          product: state.product,
+          cut: state.cut,
+          frame: state.frame,
+          length: state.length,
+          index: state.index,
+          cuts: state.cuts.map((cut) => ({
+            index: cut.index,
+            label: cut.label,
+            moments: cut.moments,
+            selected: cut.selected,
+          })),
+          timeline: state.timeline.map((frame) => ({
+            index: frame.index,
+            id: frame.id,
+            time: frame.volumeTime,
+            current: frame.current,
+            latest: frame.latest,
+          })),
+          capabilities: {
+            availableProducts: state.capabilities.availableProducts,
+            recommendedWarmProducts: state.capabilities.recommendedWarmProducts,
+            can: state.capabilities.can,
+          },
+          lastPoll: state.lastPoll,
+          canvas: {
+            backingWidth: els.radar.width,
+            backingHeight: els.radar.height,
+            clientWidth: els.radar.clientWidth,
+            clientHeight: els.radar.clientHeight,
+          },
+        }, null, 2);
+      });
+
+      els.load.addEventListener("click", () => loadSelected());
+      els.site.addEventListener("change", () => loadSelected());
+      els.frameCount.addEventListener("change", () => loadSelected());
+      els.product.addEventListener("change", () => session.setProduct(els.product.value).catch(showError));
+      els.cut.addEventListener("change", () => session.setCut(Number(els.cut.value)).catch(showError));
+      els.poll.addEventListener("click", () => session.poll().catch(showError));
+      els.warm.addEventListener("click", () => {
+        const products = lastSnapshot?.capabilities?.recommendedWarmProducts?.length
+          ? lastSnapshot.capabilities.recommendedWarmProducts
+          : ["REF", "DVEL", "SRV", "DSRV"];
+        session.warm(products, { metadata: true, concurrency: 4 }).catch(showError);
+      });
+      els.prev.addEventListener("click", () => session.previousFrame());
+      els.next.addEventListener("click", () => session.nextFrame());
+      els.play.addEventListener("click", () => session.togglePlayback({ loopSpeedPercent: Number(els.speed.value) }));
+      els.speed.addEventListener("input", () => {
+        session.setPlaybackSpeed(Number(els.speed.value));
+      });
+
+      loadSelected();
+
+      function loadSelected() {
+        session.load({
+          site: els.site.value,
+          product: els.product.value,
+          frameCount: Number(els.frameCount.value),
+          loopSpeedPercent: Number(els.speed.value),
+        }).catch(showError);
+      }
+
+      function updateCutSelect(state) {
+        const signature = state.cuts.map((cut) => `${cut.index}:${cut.label}:${cut.selected}`).join("|");
+        if (signature === latestCutSignature) return;
+        latestCutSignature = signature;
+        els.cut.replaceChildren();
+        for (const cut of state.cuts) {
+          els.cut.add(new Option(cut.label, String(cut.index), cut.selected, cut.selected));
+        }
+      }
+
+      function updateProductSelect(state) {
+        const availability = new Map(state.capabilities.products.map((product) => [product.id, product]));
+        for (const option of els.product.options) {
+          const product = availability.get(option.value);
+          option.disabled = Boolean(product && !product.available && option.value !== state.product);
+          option.textContent = product?.available
+            ? `${product.label} ${product.name}`
+            : `${product?.label || option.value} unavailable`;
+        }
+        els.product.value = state.product;
+      }
+
+      function showError(error) {
+        els.status.textContent = String(error?.message || error);
+      }
+    </script>
+  </body>
+</html>

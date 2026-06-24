@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Map Adapter Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #111417;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        gap: 12px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        min-height: 32px;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 512px minmax(360px, 1fr);
+        gap: 14px;
+        align-items: start;
+      }
+
+      canvas {
+        width: 512px;
+        height: 512px;
+        background: #030606;
+        border: 1px solid #3b464d;
+      }
+
+      pre {
+        margin: 0;
+        color: #cbd4d8;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 940px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <button id="load">Load adapter contract</button>
+      </header>
+      <div class="grid">
+        <canvas id="radar" width="512" height="512"></canvas>
+        <pre id="status">ready</pre>
+      </div>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+        deckRadarBitmapLayerProps,
+        drawRadarLayerToCanvas,
+        mapboxRadarCanvasSource,
+        mapboxRadarRasterLayer,
+        mapboxRadarSiteLayer,
+        mapboxRadarSiteSource,
+        webGpuRadarTextureUpload,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        load: document.getElementById("load"),
+        radar: document.getElementById("radar"),
+        status: document.getElementById("status"),
+      };
+
+      els.load.addEventListener("click", load);
+      load();
+
+      async function load() {
+        els.load.disabled = true;
+        try {
+          els.status.textContent = "loading live radar";
+          const loop = await toolbox.loadLoop({
+            site: "KTLX",
+            mode: "live",
+            product: "REF",
+            frameCount: 1,
+            width: 512,
+            height: 512,
+            rangeKm: 230,
+          });
+          const frame = loop.frame(0);
+          const layer = toolbox.textureLayer(frame, { site: loop.site });
+          drawRadarLayerToCanvas(els.radar, layer);
+          const mapboxSource = mapboxRadarCanvasSource(layer, els.radar, { animate: false });
+          const mapboxLayer = mapboxRadarRasterLayer(layer, { sourceId: "radar-source", layerId: "radar-layer" });
+          const deckLayer = deckRadarBitmapLayerProps(layer, { id: "deck-radar" });
+          const gpuUpload = webGpuRadarTextureUpload(layer, { id: "gpu-radar" });
+          const siteSource = mapboxRadarSiteSource({ query: loop.site });
+          const siteLayer = mapboxRadarSiteLayer({ sourceId: "radar-sites" });
+          els.status.textContent = JSON.stringify({
+            frame: `${loop.site} ${frame.frame.volumeTime || frame.frame.id}`,
+            canvas: {
+              width: els.radar.width,
+              height: els.radar.height,
+              clientWidth: els.radar.clientWidth,
+              clientHeight: els.radar.clientHeight,
+            },
+            mapboxSource: {
+              ...mapboxSource,
+              canvas: "HTMLCanvasElement",
+            },
+            mapboxLayer,
+            deckLayer: {
+              id: deckLayer.id,
+              bounds: deckLayer.bounds,
+              textureParameters: deckLayer.textureParameters,
+              opacity: deckLayer.opacity,
+            },
+            webGpuUpload: {
+              id: gpuUpload.id,
+              format: gpuUpload.format,
+              size: gpuUpload.createTexture.size,
+              bytesPerRow: gpuUpload.writeTexture.dataLayout.bytesPerRow,
+            },
+            siteSourceFeatures: siteSource.data.features.length,
+            siteLayer,
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = String(error.message || error);
+        } finally {
+          els.load.disabled = false;
+        }
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho DWD International Planner</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: "MS Sans Serif", "Tahoma", system-ui, sans-serif;
+        background: #008080;
+        color: #111;
+      }
+      body {
+        margin: 0;
+        padding: 8px;
+      }
+      .window {
+        background: #c0c0c0;
+        border: 2px solid;
+        border-color: #fff #404040 #404040 #fff;
+        box-shadow: 1px 1px 0 #000;
+        margin: 0 auto 10px;
+        max-width: 1120px;
+      }
+      .titlebar {
+        background: #000080;
+        color: #fff;
+        font-weight: 700;
+        padding: 4px 6px;
+        font-size: 14px;
+      }
+      .toolbar {
+        display: grid;
+        grid-template-columns: minmax(170px, 1fr) 70px minmax(190px, 260px) auto auto;
+        gap: 6px;
+        padding: 8px;
+        align-items: center;
+      }
+      select,
+      input,
+      button {
+        font: inherit;
+        height: 28px;
+        background: #dfdfdf;
+        border: 2px solid;
+        border-color: #fff #404040 #404040 #fff;
+        padding: 2px 6px;
+      }
+      label {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+      }
+      input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        padding: 0;
+      }
+      .panel {
+        padding: 8px;
+      }
+      canvas {
+        width: 100%;
+        height: min(62vh, 560px);
+        min-height: 360px;
+        display: block;
+        background: #102022;
+        border: 2px solid;
+        border-color: #404040 #fff #fff #404040;
+      }
+      pre {
+        margin: 0;
+        max-height: 300px;
+        overflow: auto;
+        background: #fff;
+        border: 2px solid;
+        border-color: #404040 #fff #fff #404040;
+        padding: 10px;
+        font: 12px/1.35 Consolas, "Courier New", monospace;
+        white-space: pre-wrap;
+      }
+      @media (max-width: 760px) {
+        .toolbar {
+          grid-template-columns: 1fr;
+        }
+        canvas {
+          min-height: 300px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="window">
+      <div class="titlebar">BowEcho DWD Sweep Merge Planner</div>
+      <div class="toolbar">
+        <select id="site"></select>
+        <input id="count" type="number" min="1" max="8" value="2" />
+        <select id="mode">
+          <option value="mock">Mock autoindex listings</option>
+          <option value="live">Live DWD listings</option>
+        </select>
+        <label><input id="dualPol" type="checkbox" /> Dual-pol sweep dirs</label>
+        <button id="plan">Plan</button>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="panel">
+        <canvas id="map"></canvas>
+      </div>
+    </div>
+
+    <div class="window">
+      <div class="panel">
+        <pre id="status">Loading...</pre>
+      </div>
+    </div>
+
+    <script type="module">
+      import {
+        dwdProductHdf5CatalogUrl,
+        dwdProductStationCatalogUrl,
+        dwdProductSweepListingUrl,
+        internationalRadarSites,
+        recentInternationalFramePlans,
+        recentInternationalFrames,
+      } from "../radar-toolbox.js";
+
+      const sites = internationalRadarSites({ providerId: "dwd" });
+      const els = {
+        site: document.querySelector("#site"),
+        count: document.querySelector("#count"),
+        mode: document.querySelector("#mode"),
+        dualPol: document.querySelector("#dualPol"),
+        plan: document.querySelector("#plan"),
+        map: document.querySelector("#map"),
+        status: document.querySelector("#status"),
+      };
+
+      for (const site of sites) {
+        const option = document.createElement("option");
+        option.value = site.id;
+        option.textContent = `${site.id} - ${site.label}`;
+        els.site.append(option);
+      }
+      els.site.value = "asb";
+
+      const cycleStamps = [
+        [
+          "2026061206355700", "2026061206362000", "2026061206364300", "2026061206370700", "2026061206373000",
+          "2026061206380000", "2026061206382200", "2026061206383500", "2026061206384900", "2026061206390200",
+        ],
+        [
+          "2026061206405700", "2026061206412000", "2026061206414300", "2026061206420600", "2026061206423000",
+          "2026061206430000", "2026061206432200", "2026061206433500", "2026061206434900", "2026061206440200",
+        ],
+      ];
+
+      function dwdSweepHtml(quantity, siteId) {
+        const links = [];
+        for (const stamps of cycleStamps) {
+          for (const [sweep, stamp] of stamps.entries()) {
+            const name = `ras07-vol5minng01_sweeph5onem_${quantity}_${String(sweep).padStart(2, "0")}-${stamp}-${siteId}-10103-hd5`;
+            links.push(`<a href="${name}">${name.slice(0, 48)}..&gt;</a>`);
+          }
+        }
+        const latest = `ras07-vol5minng01_sweeph5onem_${quantity}_09-LATEST-${siteId}-10103-hd5`;
+        links.push(`<a href="${latest}">${latest.slice(0, 48)}..&gt;</a>`);
+        return `<html><body><pre><a href="../">../</a>${links.join("\n")}</pre></body></html>`;
+      }
+
+      async function mockFetch(url) {
+        const value = String(url);
+        const siteId = els.site.value;
+        if (value.endsWith(`/sweep_vol_z/${siteId}/`)) {
+          return response(`<a href="../">../</a><a href="hdf5/">hdf5/</a><a href="unfiltered/">unfiltered/</a>`);
+        }
+        if (value.endsWith(`/sweep_vol_v/${siteId}/`)) {
+          return response(`<a href="../">../</a><a href="hdf5/">hdf5/</a>`);
+        }
+        if (value.endsWith(`/sweep_vol_v/${siteId}/hdf5/`)) {
+          return response(`<a href="../">../</a><a href="filter_polarimetric/">filter_polarimetric/</a><a href="filter_simple/">filter_simple/</a>`);
+        }
+        if (value.endsWith(`/sweep_vol_z/${siteId}/unfiltered/`)) return response(dwdSweepHtml("th", siteId));
+        if (value.endsWith(`/sweep_vol_v/${siteId}/hdf5/filter_polarimetric/`)) return response(dwdSweepHtml("vradh", siteId));
+        return response(`<a href="../">../</a>`);
+      }
+
+      function response(text) {
+        return { ok: true, status: 200, statusText: "OK", text: async () => text };
+      }
+
+      function selectedSite() {
+        return sites.find((site) => site.id === els.site.value) || sites[0];
+      }
+
+      function resizeCanvas() {
+        const rect = els.map.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        els.map.width = Math.max(1, Math.round(rect.width * dpr));
+        els.map.height = Math.max(1, Math.round(rect.height * dpr));
+        drawMap();
+      }
+
+      function project(site) {
+        const bounds = { west: 5.4, east: 15.5, south: 47.0, north: 55.2 };
+        const x = ((site.lon - bounds.west) / (bounds.east - bounds.west)) * els.map.width;
+        const y = (1 - ((site.lat - bounds.south) / (bounds.north - bounds.south))) * els.map.height;
+        return { x, y };
+      }
+
+      function drawMap() {
+        const ctx = els.map.getContext("2d");
+        const width = els.map.width;
+        const height = els.map.height;
+        const active = selectedSite();
+        ctx.clearRect(0, 0, width, height);
+        const grid = Math.max(40, Math.round(width / 14));
+        ctx.fillStyle = "#102022";
+        ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = "rgba(87, 149, 142, 0.35)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= width; x += grid) {
+          ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, height); ctx.stroke();
+        }
+        for (let y = 0; y <= height; y += grid) {
+          ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(width, y); ctx.stroke();
+        }
+        const outline = [
+          [6.0, 53.8], [8.2, 55.0], [10.6, 54.4], [13.8, 54.6], [14.9, 53.2],
+          [14.5, 51.0], [13.5, 50.3], [12.4, 49.1], [10.6, 47.3], [8.1, 47.6],
+          [7.2, 48.7], [6.4, 50.1], [6.0, 53.8],
+        ].map(([lon, lat]) => project({ lon, lat }));
+        ctx.fillStyle = "rgba(63, 91, 66, 0.72)";
+        ctx.strokeStyle = "#8aa172";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        outline.forEach((pt, index) => index ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y));
+        ctx.fill();
+        ctx.stroke();
+        for (const site of sites) {
+          const point = project(site);
+          const isActive = site.id === active.id;
+          ctx.beginPath();
+          ctx.arc(point.x, point.y, isActive ? 9 : 6, 0, Math.PI * 2);
+          ctx.fillStyle = isActive ? "#fff07a" : "#ffbd4a";
+          ctx.strokeStyle = "#1d1d1d";
+          ctx.lineWidth = 2;
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = "#f2f2f2";
+          ctx.font = `${Math.max(11, Math.round(width / 95))}px Tahoma, sans-serif`;
+          ctx.fillText(site.id, point.x + 8, point.y + 4);
+        }
+      }
+
+      function clickSite(event) {
+        const rect = els.map.getBoundingClientRect();
+        const x = (event.clientX - rect.left) * (els.map.width / rect.width);
+        const y = (event.clientY - rect.top) * (els.map.height / rect.height);
+        let best = null;
+        for (const site of sites) {
+          const point = project(site);
+          const dist = Math.hypot(point.x - x, point.y - y);
+          if (!best || dist < best.dist) best = { site, dist };
+        }
+        if (best && best.dist < 32 * (window.devicePixelRatio || 1)) {
+          els.site.value = best.site.id;
+          plan();
+          drawMap();
+        }
+      }
+
+      async function plan() {
+        const site = selectedSite();
+        const count = Math.max(1, Math.min(8, Number(els.count.value) || 2));
+        const options = {
+          fetch: els.mode.value === "mock" ? mockFetch : fetch,
+          includeDualPol: els.dualPol.checked,
+        };
+        els.status.textContent = "Planning DWD sweep-volume frames...";
+        drawMap();
+        try {
+          const [plans, frames] = await Promise.all([
+            recentInternationalFramePlans("dwd", site.id, count, options),
+            recentInternationalFrames("dwd", site.id, count, options),
+          ]);
+          els.status.textContent = JSON.stringify({
+            provider: "dwd",
+            site,
+            stationCatalog: dwdProductStationCatalogUrl(site.id, "sweep_vol_z"),
+            velocityFilters: dwdProductHdf5CatalogUrl(site.id, "sweep_vol_v"),
+            reflectivityFiles: dwdProductSweepListingUrl(site.id, "sweep_vol_z", "unfiltered"),
+            velocityFiles: dwdProductSweepListingUrl(site.id, "sweep_vol_v", "hdf5/filter_polarimetric"),
+            plans: plans.map((plan) => ({
+              identity: plan.identity,
+              volumeTime: plan.volumeTime,
+              merge: plan.merge,
+              partCount: plan.parts.length,
+              products: plan.sourceItem?.products?.map((product) => ({
+                productDir: product.productDir,
+                quantity: product.quantity,
+                sweepCount: product.sweepCount,
+              })),
+            })),
+            frames: frames.map((frame) => ({
+              id: frame.id,
+              cacheKey: frame.cacheKey,
+              volumeTime: frame.volumeTime,
+              merge: frame.merge,
+              urlCount: frame.urls?.length || 0,
+              site: frame.internationalSite,
+            })),
+          }, null, 2);
+        } catch (error) {
+          els.status.textContent = `DWD planner failed: ${error.message || error}`;
+        }
+      }
+
+      els.plan.addEventListener("click", plan);
+      els.site.addEventListener("change", () => { drawMap(); plan(); });
+      els.map.addEventListener("click", clickSite);
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+      plan();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Palette Contract Example</title>
+    <style>
+      body {
+        margin: 20px;
+        background: #101214;
+        color: #eef2f4;
+        font: 14px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+        gap: 12px;
+      }
+
+      textarea,
+      pre {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 420px;
+        margin: 0;
+        padding: 12px;
+        background: #151a1e;
+        color: #eef2f4;
+        border: 1px solid #3b464d;
+        font: 13px ui-monospace, SFMono-Regular, Consolas, monospace;
+        white-space: pre-wrap;
+      }
+
+      header {
+        grid-column: 1 / -1;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      select,
+      button {
+        min-height: 32px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <select id="product">
+          <option>DVEL</option>
+          <option>REF</option>
+          <option>CC</option>
+          <option>ZDR</option>
+          <option>KDP</option>
+          <option>AZSHR</option>
+        </select>
+        <button id="parse">Parse palette</button>
+      </header>
+      <textarea id="source">; velocity palette
+Product: BV
+Units: kt
+Step: 10
+RF: 82 21 86 245
+Color4: -60 0 80 255 255 0 180 255 255
+SolidColor: 0 25 25 25
+Color: 60 255 40 0</textarea>
+      <pre id="output">ready</pre>
+    </main>
+
+    <script type="module">
+      import {
+        createRadarToolbox,
+      } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        product: document.getElementById("product"),
+        parse: document.getElementById("parse"),
+        source: document.getElementById("source"),
+        output: document.getElementById("output"),
+      };
+
+      els.parse.addEventListener("click", parse);
+      els.product.addEventListener("change", parse);
+      parse();
+
+      function parse() {
+        try {
+          const palette = toolbox.parsePalette(els.source.value, { name: "Example Palette" });
+          const binding = toolbox.paletteBinding(palette, els.product.value);
+          const exported = toolbox.exportPalette(palette);
+          els.output.textContent = JSON.stringify({
+            product: els.product.value,
+            binding,
+            exported,
+          }, null, 2);
+        } catch (error) {
+          els.output.textContent = String(error.message || error);
+        }
+      }
+    </script>
+  </body>
+</html>

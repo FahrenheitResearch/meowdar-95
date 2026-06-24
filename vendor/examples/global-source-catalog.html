@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Global Source Catalog</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --panel: #c0c0c0;
+        --light: #ffffff;
+        --dark: #555555;
+        --ink: #050505;
+        --blue: #000080;
+        --teal: #008080;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--teal);
+        color: var(--ink);
+        font: 13px "MS Sans Serif", Tahoma, system-ui, sans-serif;
+      }
+
+      main {
+        min-height: 100vh;
+        display: grid;
+        grid-template-rows: auto 1fr auto;
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .window {
+        background: var(--panel);
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        box-shadow: 1px 1px 0 #000000;
+      }
+
+      .titlebar {
+        min-height: 24px;
+        padding: 3px 6px;
+        background: var(--blue);
+        color: #ffffff;
+        font-weight: 700;
+      }
+
+      .toolbar {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        padding: 8px;
+      }
+
+      select,
+      button {
+        min-height: 26px;
+        border: 2px solid;
+        border-color: var(--light) var(--dark) var(--dark) var(--light);
+        background: var(--panel);
+        color: var(--ink);
+        font: inherit;
+      }
+
+      select {
+        min-width: 190px;
+      }
+
+      .content {
+        min-height: 0;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 330px;
+        gap: 8px;
+      }
+
+      .canvas-panel {
+        padding: 6px;
+        min-width: 0;
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: min(70vh, 680px);
+        min-height: 420px;
+        background: #101719;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      aside {
+        padding: 8px;
+        min-width: 0;
+      }
+
+      pre {
+        margin: 0;
+        padding: 8px;
+        height: calc(min(70vh, 680px) + 12px);
+        overflow: auto;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        background: #ffffff;
+        border: 2px solid;
+        border-color: var(--dark) var(--light) var(--light) var(--dark);
+      }
+
+      footer {
+        padding: 5px 8px;
+      }
+
+      @media (max-width: 900px) {
+        main {
+          padding: 6px;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+
+        canvas {
+          height: 56vh;
+          min-height: 340px;
+        }
+
+        pre {
+          height: 260px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="window">
+        <div class="titlebar">BowEcho Global Source Catalog</div>
+        <div class="toolbar">
+          <select id="source">
+            <option value="nexrad,international,community">All sources</option>
+            <option value="nexrad">NEXRAD</option>
+            <option value="international">International</option>
+            <option value="community">Community</option>
+          </select>
+          <select id="provider"></select>
+          <button id="fit">Fit</button>
+        </div>
+      </section>
+
+      <section class="content">
+        <div class="window canvas-panel">
+          <canvas id="map" width="1100" height="680"></canvas>
+        </div>
+        <aside class="window">
+          <pre id="status"></pre>
+        </aside>
+      </section>
+
+      <footer class="window" id="summary"></footer>
+    </main>
+
+    <script type="module">
+      import {
+        globalRadarSites,
+        globalRadarSitesGeoJson,
+        lonLatToWorldPixel,
+        nearestRadarSite,
+        normalizeMapView,
+        radarSiteSourceSummary,
+        radarSourceCatalog,
+      } from "../radar-toolbox.js?v=globalcatalog1";
+
+      const els = {
+        source: document.getElementById("source"),
+        provider: document.getElementById("provider"),
+        fit: document.getElementById("fit"),
+        map: document.getElementById("map"),
+        status: document.getElementById("status"),
+        summary: document.getElementById("summary"),
+      };
+      const ctx = els.map.getContext("2d");
+      let view = normalizeMapView({ center: [10, 38], zoom: 2.05, width: els.map.width, height: els.map.height });
+      let selected = null;
+
+      els.source.addEventListener("change", refreshProviders);
+      els.provider.addEventListener("change", draw);
+      els.fit.addEventListener("click", fitCatalog);
+      els.map.addEventListener("click", pickNearest);
+      window.addEventListener("resize", resize);
+      refreshProviders();
+      resize();
+
+      function currentOptions() {
+        return {
+          sources: els.source.value.split(","),
+          providerId: els.provider.value || undefined,
+        };
+      }
+
+      function refreshProviders() {
+        const providers = radarSourceCatalog();
+        const selectedSources = new Set(els.source.value.split(","));
+        const allowed = providers.filter((provider) => {
+          if (selectedSources.has("nexrad") && provider.id === "nexrad-level2") return true;
+          if (selectedSources.has("community") && provider.id === "community-gr2a") return true;
+          if (selectedSources.has("international") && provider.kind.startsWith("international-")) return true;
+          return false;
+        });
+        els.provider.innerHTML = '<option value="">All providers</option>';
+        for (const provider of allowed) {
+          const option = document.createElement("option");
+          option.value = provider.id;
+          option.textContent = provider.label;
+          els.provider.appendChild(option);
+        }
+        selected = null;
+        draw();
+      }
+
+      function resize() {
+        const rect = els.map.getBoundingClientRect();
+        els.map.width = Math.max(420, Math.round(rect.width));
+        els.map.height = Math.max(340, Math.round(rect.height));
+        view = normalizeMapView({ ...view, width: els.map.width, height: els.map.height });
+        draw();
+      }
+
+      function fitCatalog() {
+        const sites = globalRadarSites(currentOptions());
+        if (!sites.length) return;
+        const west = Math.min(...sites.map((site) => site.lon));
+        const east = Math.max(...sites.map((site) => site.lon));
+        const south = Math.min(...sites.map((site) => site.lat));
+        const north = Math.max(...sites.map((site) => site.lat));
+        const center = [(west + east) * 0.5, (south + north) * 0.5];
+        view = normalizeMapView({ center, zoom: sites.length > 80 ? 2.05 : 4, width: els.map.width, height: els.map.height });
+        draw();
+      }
+
+      function pickNearest(event) {
+        const rect = els.map.getBoundingClientRect();
+        const screen = {
+          x: ((event.clientX - rect.left) / rect.width) * els.map.width,
+          y: ((event.clientY - rect.top) / rect.height) * els.map.height,
+        };
+        let best = null;
+        for (const site of globalRadarSites(currentOptions())) {
+          const point = project(site.lon, site.lat);
+          const distance = Math.hypot(point.x - screen.x, point.y - screen.y);
+          if (distance <= 14 && (!best || distance < best.distance)) best = { site, distance };
+        }
+        selected = best?.site || nearestRadarSite(unproject(screen.x, screen.y), { ...currentOptions(), maxDistanceKm: 150 });
+        draw();
+      }
+
+      function draw() {
+        const sites = globalRadarSites(currentOptions());
+        const geojson = globalRadarSitesGeoJson(currentOptions());
+        const summary = radarSiteSourceSummary(currentOptions());
+        ctx.clearRect(0, 0, els.map.width, els.map.height);
+        drawBackground();
+        drawGrid();
+        for (const site of sites) drawSite(site);
+        if (selected) drawSelected(selected);
+        els.summary.textContent = `${summary.total} sites - NEXRAD ${summary.sources.nexrad || 0} / international ${summary.sources.international || 0} / community ${summary.sources.community || 0}`;
+        els.status.textContent = JSON.stringify({
+          summary,
+          selected,
+          geojsonFeatures: geojson.features.length,
+          firstFeature: geojson.features[0] || null,
+        }, null, 2);
+      }
+
+      function drawBackground() {
+        const gradient = ctx.createLinearGradient(0, 0, 0, els.map.height);
+        gradient.addColorStop(0, "#12292d");
+        gradient.addColorStop(1, "#090f11");
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, els.map.width, els.map.height);
+      }
+
+      function drawGrid() {
+        ctx.save();
+        ctx.strokeStyle = "rgba(255,255,255,0.14)";
+        ctx.lineWidth = 1;
+        for (let lon = -180; lon <= 180; lon += 30) {
+          const a = project(lon, -75);
+          const b = project(lon, 75);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+        for (let lat = -60; lat <= 75; lat += 15) {
+          const a = project(-180, lat);
+          const b = project(180, lat);
+          ctx.beginPath();
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawSite(site) {
+        const point = project(site.lon, site.lat);
+        if (point.x < -20 || point.y < -20 || point.x > els.map.width + 20 || point.y > els.map.height + 20) return;
+        const colors = {
+          nexrad: "#f2f4f8",
+          international: "#ffbf4a",
+          community: "#48dcd2",
+        };
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, site.source === "community" ? 4 : 3, 0, Math.PI * 2);
+        ctx.fillStyle = colors[site.source] || "#dddddd";
+        ctx.strokeStyle = "#050505";
+        ctx.lineWidth = 1;
+        ctx.fill();
+        ctx.stroke();
+      }
+
+      function drawSelected(site) {
+        const point = project(site.lon, site.lat);
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, 10, 0, Math.PI * 2);
+        ctx.strokeStyle = "#ffff00";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "700 12px Tahoma, sans-serif";
+        ctx.fillText(`${site.id} ${site.label}`, point.x + 12, point.y + 4);
+        ctx.restore();
+      }
+
+      function project(lon, lat) {
+        const world = lonLatToWorldPixel(lon, lat, { zoom: view.zoom, tileSize: view.tileSize });
+        const x = unwrap(world.x, view.center.world.x, view.worldSize);
+        return {
+          x: x - view.center.world.x + view.width * 0.5,
+          y: world.y - view.center.world.y + view.height * 0.5,
+        };
+      }
+
+      function unproject(x, y) {
+        const scale = 360 / view.worldSize;
+        return {
+          lon: view.center.lon + (x - view.width * 0.5) * scale,
+          lat: view.center.lat - (y - view.height * 0.5) * scale,
+        };
+      }
+
+      function unwrap(x, reference, size) {
+        let next = x;
+        while (next - reference > size * 0.5) next -= size;
+        while (reference - next > size * 0.5) next += size;
+        return next;
+      }
+    </script>
+  </body>
+</html>

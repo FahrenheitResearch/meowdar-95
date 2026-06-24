@@ -1,0 +1,350 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>BowEcho Native RHI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1114;
+        --panel: #151b20;
+        --line: #3b4750;
+        --text: #eef3f5;
+        --muted: #a9b5bb;
+        --accent: #d6ff6b;
+        --warn: #ffbc66;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px system-ui, sans-serif;
+      }
+
+      main {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        min-height: 100vh;
+      }
+
+      header {
+        display: grid;
+        grid-template-columns: minmax(220px, 1.5fr) repeat(5, max-content) 1fr;
+        gap: 8px;
+        align-items: end;
+        padding: 10px;
+        border-bottom: 1px solid var(--line);
+        background: var(--panel);
+      }
+
+      label {
+        display: grid;
+        gap: 3px;
+        min-width: 72px;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      button {
+        min-height: 30px;
+        border: 1px solid #67747c;
+        border-radius: 0;
+        background: #20282e;
+        color: var(--text);
+      }
+
+      input[type="file"] {
+        min-width: 220px;
+      }
+
+      input[type="checkbox"] {
+        min-height: 16px;
+      }
+
+      button {
+        padding: 0 12px;
+        font-weight: 700;
+      }
+
+      button:disabled {
+        opacity: 0.5;
+      }
+
+      .check {
+        grid-auto-flow: column;
+        align-items: center;
+        min-width: 120px;
+      }
+
+      .stage {
+        display: grid;
+        min-height: 0;
+        padding: 12px;
+      }
+
+      .canvas-wrap {
+        display: grid;
+        align-items: center;
+        justify-items: center;
+        min-height: 0;
+        border: 1px solid var(--line);
+        background: #070a0c;
+        overflow: auto;
+      }
+
+      canvas {
+        max-width: 100%;
+        max-height: calc(100vh - 165px);
+        image-rendering: pixelated;
+      }
+
+      footer {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(260px, 36vw);
+        gap: 12px;
+        border-top: 1px solid var(--line);
+        background: var(--panel);
+        padding: 10px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      th,
+      td {
+        border-bottom: 1px solid #2d3840;
+        padding: 5px 6px;
+        text-align: left;
+        white-space: nowrap;
+      }
+
+      th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      pre {
+        margin: 0;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        color: #d6e1e6;
+      }
+
+      .ok {
+        color: var(--accent);
+      }
+
+      .warn {
+        color: var(--warn);
+      }
+
+      @media (max-width: 900px) {
+        header,
+        footer {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        input[type="file"] {
+          min-width: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header>
+        <label>
+          File
+          <input id="file" type="file" accept=".ar2v,.h5,.hdf,.hdf5,.nc,.cdf,.swp,.zip,.tar,.gz,.bz2" />
+        </label>
+        <label>
+          Product
+          <select id="product">
+            <option>REF</option>
+            <option>VEL</option>
+            <option>SW</option>
+            <option>ZDR</option>
+            <option>CC</option>
+            <option>PHI</option>
+            <option>KDP</option>
+          </select>
+        </label>
+        <label>
+          Cut
+          <input id="cut" type="number" min="0" step="1" placeholder="auto" />
+        </label>
+        <label>
+          Width
+          <input id="width" type="number" min="0" step="1" placeholder="native" />
+        </label>
+        <label>
+          Height
+          <input id="height" type="number" min="0" step="1" placeholder="native" />
+        </label>
+        <label class="check">
+          <input id="downscale" type="checkbox" />
+          Downscale
+        </label>
+        <button id="render" disabled>Render</button>
+        <pre id="status">ready</pre>
+      </header>
+
+      <section class="stage">
+        <div class="canvas-wrap">
+          <canvas id="canvas" width="1" height="1"></canvas>
+        </div>
+      </section>
+
+      <footer>
+        <table>
+          <thead>
+            <tr>
+              <th>Cut</th>
+              <th>Mode</th>
+              <th>Az</th>
+              <th>Elev span</th>
+              <th>Radials</th>
+              <th>Gates</th>
+              <th>Moments</th>
+            </tr>
+          </thead>
+          <tbody id="cuts"></tbody>
+        </table>
+        <pre id="meta">no frame</pre>
+      </footer>
+    </main>
+
+    <script type="module">
+      import { createRadarToolbox, drawNativeRhiToCanvas } from "../radar-toolbox.js";
+
+      const toolbox = createRadarToolbox();
+      const els = {
+        file: document.getElementById("file"),
+        product: document.getElementById("product"),
+        cut: document.getElementById("cut"),
+        width: document.getElementById("width"),
+        height: document.getElementById("height"),
+        downscale: document.getElementById("downscale"),
+        render: document.getElementById("render"),
+        status: document.getElementById("status"),
+        canvas: document.getElementById("canvas"),
+        cuts: document.getElementById("cuts"),
+        meta: document.getElementById("meta"),
+      };
+      let importedFrame = null;
+
+      els.file.addEventListener("change", importSelectedFile);
+      els.render.addEventListener("click", renderNativeRhi);
+
+      async function importSelectedFile() {
+        const file = els.file.files?.[0];
+        if (!file) return;
+        setBusy(true, "importing");
+        try {
+          const imported = await toolbox.importFileFrame(file, {
+            fileName: file.name,
+            archive: file.name.toLowerCase().endsWith(".zip"),
+          });
+          importedFrame = imported.frame;
+          const diagnostics = await toolbox.volumeDiagnostics(importedFrame);
+          renderCuts(diagnostics);
+          const rhiCut = diagnostics.cuts.find((cut) => cut.isRhiLike);
+          els.cut.value = rhiCut ? String(rhiCut.index) : "";
+          els.status.textContent = JSON.stringify({
+            file: file.name,
+            format: importedFrame.format || imported.format || "auto",
+            scanMode: diagnostics.scanMode,
+            cuts: diagnostics.cuts.length,
+            rhiCuts: diagnostics.cuts.filter((cut) => cut.isRhiLike).length,
+          }, null, 2);
+          els.render.disabled = false;
+          if (rhiCut) await renderNativeRhi();
+        } catch (error) {
+          importedFrame = null;
+          els.render.disabled = true;
+          els.status.textContent = String(error.message || error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function renderNativeRhi() {
+        if (!importedFrame) return;
+        setBusy(true, "rendering");
+        try {
+          const options = {
+            product: els.product.value,
+            allowDownscale: els.downscale.checked,
+          };
+          if (els.cut.value !== "") options.cut = Number(els.cut.value);
+          if (els.width.value !== "") options.width = Number(els.width.value);
+          if (els.height.value !== "") options.height = Number(els.height.value);
+          const panel = await toolbox.renderNativeRhi(importedFrame, options);
+          drawNativeRhiToCanvas(els.canvas, panel);
+          els.meta.textContent = JSON.stringify({
+            product: panel.meta.product,
+            cut: panel.meta.cutIndex,
+            size: `${panel.width}x${panel.height}`,
+            native: `${panel.meta.native.width}x${panel.meta.native.height}`,
+            preservesGateResolution: panel.meta.native.preservesGateResolution,
+            fixedAzimuthDeg: panel.meta.fixedAzimuthDeg,
+            topKm: panel.meta.topKm,
+            maxRangeKm: panel.meta.maxRangeKm,
+            elapsedMs: Math.round(panel.elapsedMs),
+            cacheHit: panel.cacheHit,
+          }, null, 2);
+          els.status.textContent = panel.meta.native.preservesGateResolution
+            ? "rendered native resolution"
+            : "rendered explicit downscale";
+          els.status.className = panel.meta.native.preservesGateResolution ? "ok" : "warn";
+        } catch (error) {
+          els.status.className = "warn";
+          els.status.textContent = String(error.message || error);
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      function renderCuts(diagnostics) {
+        els.cuts.innerHTML = "";
+        for (const cut of diagnostics.cuts) {
+          const row = document.createElement("tr");
+          const gateCount = Math.max(0, ...cut.gateRanges.map((range) => range.gateCount || 0));
+          row.innerHTML = `
+            <td>${cut.index}</td>
+            <td>${cut.isRhiLike ? "RHI" : cut.isPpiLike ? "PPI" : "scan"}</td>
+            <td>${formatNumber(cut.azimuth?.minDeg)}</td>
+            <td>${formatNumber(cut.radialElevation?.spanDeg)}</td>
+            <td>${cut.radialCount}</td>
+            <td>${gateCount}</td>
+            <td>${cut.moments.map((moment) => moment.moment).join(", ")}</td>
+          `;
+          row.addEventListener("click", () => {
+            els.cut.value = String(cut.index);
+          });
+          els.cuts.append(row);
+        }
+      }
+
+      function setBusy(disabled, text) {
+        els.render.disabled = disabled || !importedFrame;
+        if (text) els.status.textContent = text;
+      }
+
+      function formatNumber(value) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number.toFixed(1) : "-";
+      }
+    </script>
+  </body>
+</html>
