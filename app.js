@@ -142,6 +142,8 @@ const PROFILES = {
 };
 
 const URL_LINK = parseUrlLink(URL_PARAMS);
+const SPC_ARCHIVE_DATA_BASE = MAP_CONFIG.archiveCatalog?.dataBaseUrl || "https://fahrenheitresearch.github.io/spc-enhanced-day-classification/data";
+const CATALOG_TARGET_LIMIT = 20;
 
 const DEFAULTS = {
   site: chooseDefaultRadarSite("KMUX"),
@@ -235,6 +237,15 @@ const state = {
   siteCatalogHydrated: false,
   requestedSite: REQUESTED_SITE,
   archiveLink: URL_LINK.archive,
+  catalog: {
+    records: [],
+    filtered: [],
+    summary: null,
+    selectedDay: "",
+    currentTargets: [],
+    loading: false,
+    reportsCache: new Map(),
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -288,6 +299,15 @@ const ui = {
   backgroundProgressText: $("backgroundProgressText"),
   fitNetworkButton: $("fitNetworkButton"),
   centerRadarButton: $("centerRadarButton"),
+  catalogButton: $("catalogButton"),
+  catalogDialog: $("catalogDialog"),
+  closeCatalogDialog: $("closeCatalogDialog"),
+  catalogSearch: $("catalogSearch"),
+  catalogPreset: $("catalogPreset"),
+  catalogStatus: $("catalogStatus"),
+  catalogCount: $("catalogCount"),
+  catalogDayList: $("catalogDayList"),
+  catalogDetail: $("catalogDetail"),
   previousButton: $("previousButton"),
   playButton: $("playButton"),
   nextButton: $("nextButton"),
@@ -489,6 +509,20 @@ function bindEvents() {
   });
   ui.fitNetworkButton.addEventListener("click", fitNetwork);
   ui.centerRadarButton.addEventListener("click", () => centerSelectedRadar(true));
+  ui.catalogButton?.addEventListener("click", openArchiveCatalog);
+  ui.closeCatalogDialog?.addEventListener("click", () => ui.catalogDialog?.close());
+  ui.catalogSearch?.addEventListener("input", renderCatalog);
+  ui.catalogPreset?.addEventListener("change", renderCatalog);
+  ui.catalogDayList?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-day]");
+    if (button) void selectCatalogDay(button.dataset.day);
+  });
+  ui.catalogDetail?.addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-catalog-target]");
+    if (!button) return;
+    const target = catalogTargetById(button.dataset.catalogTarget);
+    if (target) void loadCatalogTarget(target);
+  });
 
   ui.previousButton.addEventListener("click", () => void stepFrame(-1));
   ui.nextButton.addEventListener("click", () => void stepFrame(1));
@@ -1202,6 +1236,307 @@ function currentArchiveTargetTime(date, time) {
   const link = state.archiveLink;
   if (link?.iso && link.date === date && link.time === time) return link.iso;
   return new Date(`${date}T${time}:00Z`).toISOString();
+}
+
+function escapeHtml(value = "") {
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;",
+  }[char]));
+}
+
+function formatCatalogClass(value = "") {
+  return String(value || "").replaceAll("_", " ");
+}
+
+function catalogDayText(record) {
+  return [
+    record.day,
+    record.risk,
+    record.primary,
+    record.ofb,
+    record.ofb_reason,
+    record.narrative,
+    ...(record.secondary || []),
+    ...(record.tags || []),
+    ...(record.boundaries || []),
+    ...(record.modes || []),
+    ...(record.hazards || []),
+    ...(record.challenges || []),
+  ].join(" ").toLowerCase();
+}
+
+async function catalogJson(path) {
+  const response = await fetch(`${SPC_ARCHIVE_DATA_BASE}/${path}`);
+  if (!response.ok) throw new Error(`catalog ${path} HTTP ${response.status}`);
+  return response.json();
+}
+
+async function openArchiveCatalog() {
+  if (ui.catalogDialog?.showModal) ui.catalogDialog.showModal();
+  else ui.catalogDialog?.setAttribute("open", "");
+  await ensureArchiveCatalog();
+}
+
+async function ensureArchiveCatalog() {
+  if (state.catalog.records.length || state.catalog.loading) {
+    renderCatalog();
+    return;
+  }
+  state.catalog.loading = true;
+  ui.catalogStatus.textContent = "Loading SPC enhanced-day archive...";
+  try {
+    const [records, summary] = await Promise.all([
+      catalogJson("classifications.json"),
+      catalogJson("tornado_radar_summary.json").catch(() => ({ days: {} })),
+    ]);
+    state.catalog.records = records.sort((a, b) => b.day.localeCompare(a.day));
+    state.catalog.summary = summary;
+    ui.catalogStatus.textContent = `${records.length.toLocaleString()} classified days loaded`;
+    renderCatalog();
+  } catch (error) {
+    ui.catalogStatus.textContent = `Catalog load failed: ${friendlyError(error)}`;
+    ui.catalogDetail.innerHTML = `<p class="catalog-empty">Could not load the SPC archive catalog.</p>`;
+  } finally {
+    state.catalog.loading = false;
+  }
+}
+
+function catalogMatchesPreset(record, preset) {
+  const text = catalogDayText(record);
+  if (preset === "mcswind") return /mcs|derecho|bow|qlcs|wind/.test(text);
+  if (preset === "hail") return /hail|lapse/.test(text);
+  if (preset === "tornado") return /tornado|supercell|cyclic/.test(text) || Boolean(state.catalog.summary?.days?.[record.day]);
+  if (preset === "ofb") return ["core", "likely"].includes(record.ofb);
+  if (preset === "high") return record.risk === "HIGH";
+  return true;
+}
+
+function renderCatalog() {
+  const query = String(ui.catalogSearch?.value || "").trim().toLowerCase();
+  const preset = ui.catalogPreset?.value || "all";
+  const filtered = state.catalog.records.filter((record) => {
+    if (!catalogMatchesPreset(record, preset)) return false;
+    return !query || catalogDayText(record).includes(query);
+  });
+  state.catalog.filtered = filtered;
+  ui.catalogCount.textContent = `${filtered.length.toLocaleString()} days`;
+  ui.catalogDayList.innerHTML = filtered.slice(0, 250).map((record) => {
+    const selected = record.day === state.catalog.selectedDay ? " selected" : "";
+    const torn = state.catalog.summary?.days?.[record.day];
+    const torText = torn ? `${torn.tornado_count} tor ${torn.strongest_rating || ""}` : "";
+    return `
+      <button class="catalog-day${selected}" type="button" data-day="${escapeHtml(record.day)}">
+        <b>${escapeHtml(record.day)}</b>
+        <span>${escapeHtml(record.risk)}</span>
+        <span>${escapeHtml(formatCatalogClass(record.primary))}</span>
+        <small>${escapeHtml(record.ofb || "none")} OFB/MCS ${escapeHtml(torText)}</small>
+      </button>
+    `;
+  }).join("");
+  if (!filtered.length) {
+    ui.catalogDayList.innerHTML = `<p class="catalog-empty">No matching days.</p>`;
+  }
+}
+
+async function selectCatalogDay(day) {
+  const record = state.catalog.records.find((item) => item.day === day);
+  if (!record) return;
+  state.catalog.selectedDay = day;
+  state.catalog.currentTargets = [];
+  renderCatalog();
+  renderCatalogDetail(record, { loading: true });
+  try {
+    if (!state.engineReady) await detectEngine();
+    const eventDay = await fetchCatalogReports(day);
+    const targets = buildCatalogTargets(record, eventDay).slice(0, CATALOG_TARGET_LIMIT);
+    state.catalog.currentTargets = targets;
+    renderCatalogDetail(record, { eventDay, targets });
+    ui.catalogStatus.textContent = `${day}: ${targets.length} radar target${targets.length === 1 ? "" : "s"} generated`;
+  } catch (error) {
+    renderCatalogDetail(record, { error });
+    ui.catalogStatus.textContent = `${day}: target generation failed`;
+  }
+}
+
+async function fetchCatalogReports(day) {
+  if (state.catalog.reportsCache.has(day)) return state.catalog.reportsCache.get(day);
+  const loader = state.module?.fetchSpcEventDay;
+  if (typeof loader !== "function") throw new Error("SPC report parser is not available yet.");
+  const promise = loader(day, { includeConsolidated: false });
+  state.catalog.reportsCache.set(day, promise);
+  return promise;
+}
+
+function dominantCatalogKind(record) {
+  const text = catalogDayText(record);
+  if (/mcs|derecho|bow|qlcs|wind damage|damaging wind/.test(text)) return "wind";
+  if (/hail|lapse rate/.test(text)) return "hail";
+  if (/tornado|supercell|cyclic/.test(text)) return "tornado";
+  return "";
+}
+
+function reportMagnitude(report) {
+  const match = String(report.magnitude || "").match(/\d+(?:\.\d+)?/);
+  const numeric = match ? Number(match[0]) : 0;
+  if (!Number.isFinite(numeric)) return 0;
+  if (report.kind === "hail" && numeric > 20) return numeric / 100;
+  return numeric;
+}
+
+function catalogReportScore(report, preferredKind) {
+  const kindBase = report.kind === "tornado" ? 3500 : report.kind === "wind" ? 2500 : report.kind === "hail" ? 2200 : 1000;
+  const preferred = preferredKind && report.kind === preferredKind ? 20000 : 0;
+  const magnitude = report.kind === "hail" ? reportMagnitude(report) * 900 : reportMagnitude(report) * 35;
+  return kindBase + preferred + magnitude;
+}
+
+function nearestCatalogRadars(report, limit = 3) {
+  const lat = Number(report.lat ?? report.beginLat ?? report.begin_lat);
+  const lon = Number(report.lon ?? report.lng ?? report.beginLon ?? report.begin_lon);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+  return Object.entries(SITES)
+    .map(([id, site]) => ({
+      id,
+      name: site.short || site.name || id,
+      distanceMi: haversineMiles(lat, lon, Number(site.lat), Number(site.lon)),
+    }))
+    .filter((radar) => Number.isFinite(radar.distanceMi))
+    .sort((a, b) => a.distanceMi - b.distanceMi)
+    .slice(0, limit);
+}
+
+function haversineMiles(lat1, lon1, lat2, lon2) {
+  const toRad = (value) => value * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 3958.8 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function buildCatalogTargets(record, eventDay) {
+  const preferredKind = dominantCatalogKind(record);
+  const reports = Array.from(eventDay?.reports || [])
+    .filter((report) => report?.timeUtc && Number.isFinite(Number(report.lat)) && Number.isFinite(Number(report.lon)))
+    .map((report, index) => {
+      const radars = nearestCatalogRadars(report);
+      return {
+        id: `${record.day}-${index}`,
+        record,
+        report,
+        radars,
+        score: catalogReportScore(report, preferredKind),
+      };
+    })
+    .filter((target) => target.radars.length);
+
+  const selected = [];
+  const seen = new Set();
+  for (const target of reports.sort((a, b) => b.score - a.score)) {
+    const hour = String(target.report.timeUtc).slice(0, 13);
+    const latBucket = Math.round(Number(target.report.lat) * 2) / 2;
+    const lonBucket = Math.round(Number(target.report.lon) * 2) / 2;
+    const key = `${target.report.kind}:${hour}:${latBucket}:${lonBucket}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    selected.push(target);
+    if (selected.length >= CATALOG_TARGET_LIMIT) break;
+  }
+  return selected;
+}
+
+function renderCatalogDetail(record, { loading = false, eventDay = null, targets = [], error = null } = {}) {
+  const text = catalogDayText(record);
+  const packs = [
+    record.risk,
+    `${record.ofb || "none"} OFB/MCS`,
+    ...(record.hazards || []).slice(0, 4),
+    ...(record.modes || []).slice(0, 4),
+    ...(record.tags || []).slice(0, 5),
+  ].filter(Boolean);
+  const reportCounts = eventDay?.reports?.reduce((acc, report) => {
+    acc[report.kind] = (acc[report.kind] || 0) + 1;
+    return acc;
+  }, {}) || {};
+  ui.catalogDetail.innerHTML = `
+    <h3>${escapeHtml(record.day)} - ${escapeHtml(formatCatalogClass(record.primary))}</h3>
+    <p>${escapeHtml(record.narrative || "")}</p>
+    <div class="catalog-chip-row">${packs.map((item) => `<span class="catalog-chip">${escapeHtml(formatCatalogClass(item))}</span>`).join("")}</div>
+    <p class="catalog-muted">${escapeHtml(record.ofb_reason || "")}</p>
+    ${loading ? `<p class="catalog-empty">Generating report-based radar targets...</p>` : ""}
+    ${error ? `<p class="catalog-empty">Could not generate targets: ${escapeHtml(friendlyError(error))}</p>` : ""}
+    ${eventDay ? `<p class="catalog-muted">SPC reports: ${reportCounts.wind || 0} wind, ${reportCounts.hail || 0} hail, ${reportCounts.tornado || 0} tornado. Showing top ${targets.length} ranked radar targets.</p>` : ""}
+    ${targets.length ? `<div class="catalog-target-list">${targets.map(renderCatalogTarget).join("")}</div>` : (!loading && !error ? `<p class="catalog-empty">No report-based targets found for this day.</p>` : "")}
+  `;
+}
+
+function renderCatalogTarget(target) {
+  const report = target.report;
+  const time = new Date(report.timeUtc);
+  const label = `${String(report.kind || "report").toUpperCase()} ${report.magnitudeLabel || report.magnitude || ""}`.trim();
+  const place = [report.location, report.county, report.state].filter(Boolean).join(", ");
+  return `
+    <article class="catalog-target">
+      <div class="catalog-target-head">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(Number.isFinite(time.getTime()) ? formatTime(time, true) : String(report.timeUtc))}</span>
+      </div>
+      <div class="catalog-target-meta">
+        <span>${escapeHtml(place || `${report.lat}, ${report.lon}`)}</span>
+        <span>score ${Math.round(target.score)}</span>
+      </div>
+      <div class="catalog-radar-row">
+        ${target.radars.map((radar, index) => `<button type="button" data-catalog-target="${escapeHtml(target.id)}:${index}">${escapeHtml(radar.id)} ${Math.round(radar.distanceMi)} mi</button>`).join("")}
+      </div>
+    </article>
+  `;
+}
+
+function catalogTargetById(value) {
+  const [targetId, radarIndexText] = String(value || "").split(":");
+  const target = state.catalog.currentTargets.find((item) => item.id === targetId);
+  const radar = target?.radars?.[Number(radarIndexText) || 0];
+  return target && radar ? { ...target, radar } : null;
+}
+
+async function loadCatalogTarget(target) {
+  const report = target.report;
+  const radar = target.radar;
+  const targetDate = new Date(report.timeUtc);
+  if (!Number.isFinite(targetDate.getTime())) {
+    showToast("That report does not have a usable UTC time");
+    return;
+  }
+  const site = normalizeRadarSiteCode(radar.id);
+  if (!SITES[site] && !state.siteCatalogHydrated) await detectEngine();
+  if (!SITES[site]) {
+    showToast(`Radar ${site} is not available in the current catalog`);
+    return;
+  }
+
+  const iso = targetDate.toISOString();
+  state.requestedSite = site;
+  state.archiveLink = {
+    iso,
+    date: iso.slice(0, 10),
+    time: iso.slice(11, 16),
+    center: true,
+  };
+  state.site = site;
+  state.mode = "archive";
+  state.product = "REF";
+  state.loopCount = normalizeLoopCount(3);
+  ui.archiveDate.value = state.archiveLink.date;
+  ui.archiveTime.value = state.archiveLink.time;
+  savePreferences();
+  syncControls();
+  centerSelectedRadar(true);
+  ui.catalogDialog?.close();
+  showToast(`Loading ${site} ${String(report.kind || "report")} target at ${state.archiveLink.time}Z`);
+  await loadRadar();
 }
 
 function readPreferences() {

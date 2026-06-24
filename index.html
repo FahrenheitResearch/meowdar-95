@@ -8,9 +8,9 @@
   <link rel="icon" href="data:,">
   <title>Meowdar 95</title>
   <link rel="preconnect" href="https://tile.openstreetmap.org" crossorigin>
-  <link rel="stylesheet" href="./styles.css?v=archive-links-1">
-    <script src="./config.js?v=archive-links-1"></script>
-    <script type="module" src="./app.js?v=archive-links-1"></script>
+  <link rel="stylesheet" href="./styles.css?v=archive-catalog-3">
+    <script src="./config.js?v=archive-catalog-3"></script>
+    <script type="module" src="./app.js?v=archive-catalog-3"></script>
 </head>
 <body>
   <a class="skip-link" href="#radarStage">Skip to radar</a>
@@ -43,6 +43,7 @@
         <button id="locationButton" class="tool-button" type="button">⌖ Nearest</button>
         <button id="fitNetworkButton" class="tool-button" type="button">▣ Network</button>
         <button id="centerRadarButton" class="tool-button" type="button">◎ Selected</button>
+        <button id="catalogButton" class="tool-button" type="button">Archive Catalog</button>
         <span class="tool-separator" aria-hidden="true"></span>
         <button id="resetButton" class="tool-button" type="button">Reset</button>
         <span class="toolbar-spacer"></span>
@@ -183,6 +184,31 @@
       </footer>
     </section>
   </main>
+
+  <dialog class="catalog-dialog" id="catalogDialog" aria-labelledby="catalogTitle">
+    <div class="catalog-shell">
+      <header class="title-bar">
+        <div class="title-bar-text"><strong id="catalogTitle">Meowdar Historic Archive</strong></div>
+        <div class="window-controls"><button class="dialog-close" id="closeCatalogDialog" type="button" aria-label="Close archive catalog">×</button></div>
+      </header>
+      <div class="catalog-body">
+        <div class="catalog-controls">
+          <label class="win-field" for="catalogSearch"><span>Search</span><input id="catalogSearch" type="search" placeholder="Mayfield, derecho, MCS wind, 2021-12-10"></label>
+          <label class="win-field" for="catalogPreset"><span>Filter</span><select id="catalogPreset"><option value="all">All classified days</option><option value="mcswind">MCS / wind</option><option value="hail">Hail</option><option value="tornado">Tornado</option><option value="ofb">Core/likely OFB-MCS</option><option value="high">High risk</option></select></label>
+          <div class="mini-status" id="catalogStatus">Loading SPC enhanced-day archive...</div>
+        </div>
+        <div class="catalog-grid">
+          <section class="catalog-list-panel" aria-label="Classified archive days">
+            <div class="catalog-list-head"><strong>Days</strong><span id="catalogCount">0</span></div>
+            <div class="catalog-day-list" id="catalogDayList"></div>
+          </section>
+          <section class="catalog-detail-panel" id="catalogDetail" aria-live="polite">
+            <p class="catalog-empty">Select a classified day to generate radar targets.</p>
+          </section>
+        </div>
+      </div>
+    </div>
+  </dialog>
 
   <dialog class="palette-dialog" id="paletteDialog" aria-labelledby="paletteTitle">
     <form method="dialog" class="palette-dialog-shell">
