@@ -15,7 +15,7 @@ API key. Optional GOES GLM lightning is also decoded client-side.
 - **High-resolution full default.** Full mode renders to a 3072 × 3072
   backing canvas with native gate/bin sampling and nearest-neighbor map
   resampling. Low Data is an explicit 512 × 512 mode.
-- **Large progressive loops.** Choose 1, 6, 12, 24, 36, 48, 72, or 96 frames,
+- **Large progressive loops.** Choose 1, 3, 6, 12, 24, 36, 48, 72, or 96 frames,
   four playback speeds, and configurable last-frame dwell. The newest frame
   appears first; older frames fill in behind it.
 - **Per-frame low-sweep loops.** Every volume in a loop is independently checked
@@ -89,7 +89,7 @@ tile endpoint, polling, or GLM limits:
 window.MEOWDAR_CONFIG = {
   radarSites: {
     // Default is the full BowEcho radar catalog.
-    defaultSite: "KDAX",
+    defaultSite: "KMUX",
     activePreset: null,
 
     // To restrict the app for an org, either switch activePreset or replace
@@ -171,7 +171,7 @@ assuming the community tile servers will absorb unlimited use.
 
 ## Performance and large loops
 
-The 12-frame Full loop is the practical default. A 96-frame native loop is
+The 3-frame Full loop is the practical default. A 96-frame native loop is
 available because professionals sometimes need it, but 96 raw 3072 × 3072 RGBA
 frames alone represent about 3.38 GiB before decoded volumes, JavaScript object
 overhead, browser/GPU copies, and map textures. Meowdar does not quietly reduce

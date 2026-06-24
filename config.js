@@ -4,7 +4,7 @@ window.MEOWDAR_CONFIG = {
   radarSites: {
     // CAFIRE handoff: leave allowedSites as "all" for the full BowEcho catalog,
     // or switch activePreset / allowedSites to a regional/custom list.
-    defaultSite: "KDAX",
+    defaultSite: "KMUX",
     activePreset: null,
     allowedSites: "all",
     presets: {

@@ -134,11 +134,11 @@ const PROFILES = {
 };
 
 const DEFAULTS = {
-  site: chooseDefaultRadarSite("KDAX"),
+  site: chooseDefaultRadarSite("KMUX"),
   mode: "live",
   product: "REF",
   profile: "full",
-  loopCount: 12,
+  loopCount: 3,
   rangeKm: 230,
   quality: "auto",
   followLatestLow: true,
@@ -665,7 +665,7 @@ function hydrateRadarSites(module) {
   createSitePills();
   updateStationLabels();
   updateConditionCard();
-  if (state.mapReady && state.source === "preview") fitNetwork();
+  if (state.mapReady && state.source === "preview") centerSelectedRadar(false);
   else updateSitePillPositions();
   return true;
 }
@@ -840,6 +840,14 @@ function activeMapBounds() {
 }
 
 function initialMapView() {
+  const site = SITES[state.site] || SITES[DEFAULTS.site];
+  if (site) {
+    return {
+      center: [site.lon, site.lat],
+      zoom: 6.1,
+    };
+  }
+
   const bounds = activeSiteBounds();
   const lonSpan = bounds.east - bounds.west;
   const latSpan = bounds.north - bounds.south;
@@ -998,7 +1006,7 @@ function formatDateInput(date) {
 
 function readPreferences() {
   try {
-    return JSON.parse(localStorage.getItem("meowdar-preferences-v1") || "{}");
+    return JSON.parse(localStorage.getItem("meowdar-preferences-v2") || "{}");
   } catch {
     return {};
   }
@@ -1006,7 +1014,7 @@ function readPreferences() {
 
 function savePreferences() {
   try {
-    localStorage.setItem("meowdar-preferences-v1", JSON.stringify({
+    localStorage.setItem("meowdar-preferences-v2", JSON.stringify({
       site: state.site,
       product: state.product,
       mode: state.mode,
@@ -1044,7 +1052,7 @@ function resetControls() {
   ui.emptyLayer.hidden = true;
   refreshDemoTimes();
   renderPreview();
-  fitNetwork();
+  centerSelectedRadar(true);
   showToast("Radar controls reset");
 }
 
@@ -3046,7 +3054,7 @@ function formatRelativeTime(date) {
 }
 
 function normalizeLoopCount(value) {
-  const allowed = [1, 6, 12, 24, 36, 48, 72, 96];
+  const allowed = [1, 3, 6, 12, 24, 36, 48, 72, 96];
   const numeric = Number(value);
   return allowed.includes(numeric) ? numeric : DEFAULTS.loopCount;
 }

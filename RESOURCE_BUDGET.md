@@ -40,7 +40,7 @@ default:
    reduction.
 8. GLM is off by default and runs in a separate worker only when enabled.
 
-A 12-frame Full loop is the recommended general workstation setting. On a
+A 3-frame Full loop is the recommended initial workstation setting. On a
 four-core laptop, use 6–12 Full frames for routine work or Low Data when a long
 history is more important than native pixels. The 72/96-frame Full options are
 best treated as deliberate workstation modes.
