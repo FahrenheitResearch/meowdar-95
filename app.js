@@ -3229,7 +3229,7 @@ function formatRelativeTime(date) {
 }
 
 function normalizeLoopCount(value) {
-  const allowed = [1, 3, 6, 12, 24, 36, 48, 72, 96];
+  const allowed = [1, 3, 6];
   const numeric = Number(value);
   return allowed.includes(numeric) ? numeric : DEFAULTS.loopCount;
 }
