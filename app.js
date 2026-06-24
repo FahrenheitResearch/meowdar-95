@@ -1120,10 +1120,11 @@ async function loadRadar() {
 
 async function loadLiveRadar(generation) {
   const profile = PROFILES[state.profile];
-  setLoading(true, `Loading the newest ${state.site} scan`, "Fetching one Level II volume…");
+  const requestedFrames = Math.max(1, Math.min(state.loopCount, 6));
+  setLoading(true, `Loading the newest ${state.site} scan`, `Fetching ${requestedFrames} recent Level II volume${requestedFrames === 1 ? "" : "s"}…`);
   cleanupRadarSession({ preserveGeneration: true });
 
-  const options = radarOptions({ mode: "live", frameCount: 1 });
+  const options = radarOptions({ mode: "live", frameCount: requestedFrames });
   state.session = createSession(options);
 
   if (typeof state.session.subscribe === "function") {
@@ -1134,7 +1135,7 @@ async function loadLiveRadar(generation) {
     });
   }
 
-  await state.session.load({ ...options, frameCount: 1, concurrency: 1 });
+  await state.session.load({ ...options, concurrency: loopConcurrency() });
   if (generation !== state.loadGeneration) return;
 
   state.snapshot = state.session.snapshot?.() || state.snapshot;
@@ -1143,12 +1144,13 @@ async function loadLiveRadar(generation) {
   state.loop = null;
   await moveLiveToLatest();
   syncSessionSnapshot(state.snapshot);
-  await settleLiveSnapshot();
+  const rendered = await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
+  if (!rendered) showToast("Waiting for the newest complete low sweep");
   setLivePresentation("Live", "NOAA Level II");
   setLoading(false);
   scheduleLivePoll();
 
-  if (state.loopCount > 1) scheduleLiveBackgroundLoop(generation, profile);
+  if (state.loopCount > 1 && liveFrameCount() < state.loopCount) scheduleLiveBackgroundLoop(generation, profile);
 }
 
 function createSession(options) {
@@ -1185,7 +1187,7 @@ function scheduleLiveBackgroundLoop(generation, profile) {
       if (generation !== state.loadGeneration || backgroundId !== state.backgroundGeneration) return;
       state.snapshot = state.session.snapshot?.() || state.snapshot;
       await moveLiveToLatest();
-      await settleLiveSnapshot();
+      await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
       schedulePolarLoopPreload();
       showToast(`${liveFrameCount()}-scan loop ready`);
     } catch (error) {
@@ -1421,7 +1423,7 @@ function syncSessionSnapshot(snapshot) {
   const cuts = snapshot.cuts || snapshot.capabilities?.cuts || readSessionCuts();
   if (Array.isArray(cuts) && cuts.length) state.allCuts = cuts;
   if (Number.isInteger(snapshot.index)) {
-    const count = Math.max(1, Number(snapshot.timeline?.length || snapshot.frameCount || currentFrameCount()));
+    const count = Math.max(1, Number(snapshot.timeline?.length || snapshot.length || snapshot.frameCount || currentFrameCount()));
     const snapshotIsLatest = snapshot.index >= count - 1;
     if (!(liveFrameHoldActive(count) && snapshotIsLatest)) state.frameIndex = snapshot.index;
   }
@@ -1436,11 +1438,11 @@ function syncSessionSnapshot(snapshot) {
   }
 }
 
-async function settleLiveSnapshot() {
+async function settleLiveSnapshot({ restoreHeld = true } = {}) {
   const settlementGeneration = ++state.snapshotSettleGeneration;
   const diagnosticsGeneration = ++state.diagnosticsGeneration;
   const heldKey = state.liveFrameHoldKey;
-  if (heldKey && liveFrameHoldActive()) await restoreLiveHeldFrame(heldKey);
+  if (restoreHeld && heldKey && liveFrameHoldActive()) await restoreLiveHeldFrame(heldKey);
   const frame = state.session?.currentFrame?.();
   if (!frame) return false;
   const key = frameIdentity(frame);
@@ -1458,7 +1460,7 @@ async function settleLiveSnapshot() {
 
   state.snapshot = state.session?.snapshot?.() || state.snapshot;
   if (Number.isInteger(state.snapshot?.index)) {
-    const count = Math.max(1, Number(state.snapshot?.timeline?.length || state.snapshot?.frameCount || currentFrameCount()));
+    const count = Math.max(1, Number(state.snapshot?.timeline?.length || state.snapshot?.length || state.snapshot?.frameCount || currentFrameCount()));
     const snapshotIsLatest = state.snapshot.index >= count - 1;
     if (!(liveFrameHoldActive(count) && snapshotIsLatest)) state.frameIndex = state.snapshot.index;
   }
@@ -1468,6 +1470,53 @@ async function settleLiveSnapshot() {
   if (settlementGeneration !== state.snapshotSettleGeneration || state.source !== "live") return false;
   renderLiveCurrentFrame(displayFrame);
   return frameReadyForRender(displayFrame);
+}
+
+async function settleBestLiveFrame({ startIndex = liveFrameCount() - 1, allowNewerFallback = true } = {}) {
+  if (!state.session) return false;
+  const count = liveFrameCount();
+  if (count < 1) return false;
+  const start = Math.max(0, Math.min(Number(startIndex) || 0, count - 1));
+  const candidates = [];
+  for (let index = start; index >= 0; index -= 1) candidates.push(index);
+  if (allowNewerFallback) {
+    for (let index = start + 1; index < count; index += 1) candidates.push(index);
+  }
+
+  const originalIndex = state.frameIndex;
+  const previousHold = {
+    until: state.liveFrameHoldUntil,
+    key: state.liveFrameHoldKey,
+    time: state.liveFrameHoldTime,
+  };
+
+  for (const index of candidates) {
+    try {
+      if (typeof state.session.setFrame === "function") await state.session.setFrame(index);
+      else if (index !== state.frameIndex) continue;
+      state.snapshot = state.session.snapshot?.() || state.snapshot;
+      state.frameIndex = Number.isInteger(state.snapshot?.index) ? state.snapshot.index : index;
+      syncTimeline();
+      if (await settleLiveSnapshot({ restoreHeld: false })) {
+        if (state.frameIndex < liveFrameCount() - 1) rememberLiveFrameHold();
+        else clearLiveFrameHold();
+        return true;
+      }
+    } catch (error) {
+      console.debug("Skipped non-renderable live frame", error);
+    }
+  }
+
+  if (state.hasRenderedRadar && typeof state.session.setFrame === "function") {
+    await state.session.setFrame(Math.max(0, Math.min(originalIndex, count - 1)));
+    state.snapshot = state.session.snapshot?.() || state.snapshot;
+    state.frameIndex = Number.isInteger(state.snapshot?.index) ? state.snapshot.index : originalIndex;
+    state.liveFrameHoldUntil = previousHold.until;
+    state.liveFrameHoldKey = previousHold.key;
+    state.liveFrameHoldTime = previousHold.time;
+    syncTimeline();
+  }
+  return false;
 }
 
 function readSessionCuts() {
@@ -2060,7 +2109,9 @@ function schedulePolarRadarLayer(frame) {
 
 function schedulePolarLoopPreload() {
   if (!POLAR_RENDER_EXPERIMENT || state.profile !== "full" || typeof state.toolbox?.renderNativePpi !== "function") return;
-  const frames = state.source === "live" ? state.session?.frames : state.loop?.frames;
+  const frames = state.source === "live"
+    ? (state.session?.loop?.renderedFrames || state.session?.loop?.frames)
+    : state.loop?.frames;
   if (!Array.isArray(frames) || frames.length < 2) return;
   const generation = state.polarLayerGeneration;
   scheduleIdle(async () => {
@@ -2548,10 +2599,10 @@ function setLivePresentation(label, sourceText) {
 }
 
 function extractFrameTime(frame) {
-  const value = frame?.timestamp ?? frame?.time ?? frame?.scanTime ?? frame?.generatedAt
-    ?? frame?.metadata?.timestamp ?? frame?.metadata?.time
-    ?? frame?.frame?.timestamp ?? frame?.frame?.time ?? frame?.frame?.scanTime
-    ?? frame?.frame?.metadata?.timestamp ?? frame?.frame?.metadata?.time;
+  const value = frame?.volumeTime ?? frame?.timestamp ?? frame?.time ?? frame?.scanTime ?? frame?.generatedAt
+    ?? frame?.metadata?.volumeTime ?? frame?.metadata?.timestamp ?? frame?.metadata?.time
+    ?? frame?.frame?.volumeTime ?? frame?.frame?.timestamp ?? frame?.frame?.time ?? frame?.frame?.scanTime
+    ?? frame?.frame?.metadata?.volumeTime ?? frame?.frame?.metadata?.timestamp ?? frame?.frame?.metadata?.time;
   if (value == null) return null;
   const date = value instanceof Date ? value : new Date(typeof value === "number" && value < 1e12 ? value * 1000 : value);
   return Number.isNaN(date.getTime()) ? null : date;
@@ -2566,10 +2617,18 @@ function currentFrameCount() {
 function liveFrameCount() {
   const timeline = state.snapshot?.timeline;
   if (Array.isArray(timeline) && timeline.length) return timeline.length;
-  return Math.max(1, Number(state.snapshot?.frameCount || state.session?.length || 1));
+  return Math.max(1, Number(state.snapshot?.length || state.session?.loop?.length || state.snapshot?.frameCount || state.session?.length || 1));
 }
 
 function liveFrameAt(index) {
+  if (typeof state.session?.currentFrame === "function") {
+    const frame = state.session.currentFrame(index);
+    if (frame) return frame;
+  }
+  if (typeof state.session?.loop?.frame === "function") {
+    const frame = state.session.loop.frame(index);
+    if (frame) return frame;
+  }
   const frame = typeof state.session?.frame === "function" ? state.session.frame(index) : null;
   if (frame) return frame;
   const frames = state.snapshot?.frames;
@@ -2707,7 +2766,7 @@ function syncTimeline() {
 }
 
 function timelineEntryDate(entry) {
-  const value = typeof entry === "object" ? entry?.timestamp ?? entry?.time ?? entry?.scanTime : entry;
+  const value = typeof entry === "object" ? entry?.volumeTime ?? entry?.timestamp ?? entry?.time ?? entry?.scanTime : entry;
   if (value == null) return null;
   const date = new Date(typeof value === "number" && value < 1e12 ? value * 1000 : value);
   return Number.isNaN(date.getTime()) ? null : date;
@@ -2743,7 +2802,9 @@ async function goToFrame(index) {
       state.snapshot = state.session?.snapshot?.() || state.snapshot;
       if (Number.isInteger(state.snapshot?.index)) state.frameIndex = state.snapshot.index;
       rememberLiveFrameHold();
-      await settleLiveSnapshot();
+      if (!await settleLiveSnapshot()) {
+        await settleBestLiveFrame({ startIndex: state.frameIndex, allowNewerFallback: true });
+      }
     }
   } catch (error) {
     console.warn("Could not change radar frame", error);
@@ -2796,7 +2857,7 @@ async function refreshRadar() {
       await state.session.poll(radarOptions({ mode: "live", frameCount: state.loopCount }));
       state.snapshot = state.session.snapshot?.() || state.snapshot;
       await moveLiveToLatest();
-      await settleLiveSnapshot();
+      await settleBestLiveFrame({ startIndex: liveFrameCount() - 1, allowNewerFallback: false });
       showToast(frameReadyForRender(state.session.currentFrame?.()) ? "Radar is up to date" : "Waiting for the newest complete low tilt");
     } else if (state.source === "archive") {
       await loadRadar();
@@ -2822,7 +2883,7 @@ function scheduleLivePoll() {
   state.livePollTimer = setTimeout(async () => {
     const session = state.session;
     const generation = state.loadGeneration;
-    if (!document.hidden && state.source === "live" && session?.poll && !state.isPlaying && !state.loopBuilding) {
+    if (!document.hidden && state.source === "live" && session?.poll && !state.loopBuilding) {
       try {
         const wasFollowingLatest = !liveFrameHoldActive() && state.frameIndex >= currentFrameCount() - 1;
         const heldKey = state.liveFrameHoldKey;
@@ -2835,7 +2896,12 @@ function scheduleLivePoll() {
         if (wasFollowingLatest) await moveLiveToLatest();
         else syncSessionSnapshot(state.snapshot);
         if (generation !== state.loadGeneration || session !== state.session || state.source !== "live") return;
-        await settleLiveSnapshot();
+        if (!await settleLiveSnapshot()) {
+          await settleBestLiveFrame({
+            startIndex: wasFollowingLatest ? liveFrameCount() - 1 : state.frameIndex,
+            allowNewerFallback: !wasFollowingLatest,
+          });
+        }
         if (state.loopCount > 1 && liveFrameCount() < state.loopCount) {
           scheduleLiveBackgroundLoop(generation, PROFILES[state.profile]);
         }
