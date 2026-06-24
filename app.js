@@ -300,6 +300,7 @@ const ui = {
   fitNetworkButton: $("fitNetworkButton"),
   centerRadarButton: $("centerRadarButton"),
   catalogButton: $("catalogButton"),
+  exportFramesButton: $("exportFramesButton"),
   catalogDialog: $("catalogDialog"),
   closeCatalogDialog: $("closeCatalogDialog"),
   catalogSearch: $("catalogSearch"),
@@ -510,6 +511,7 @@ function bindEvents() {
   ui.fitNetworkButton.addEventListener("click", fitNetwork);
   ui.centerRadarButton.addEventListener("click", () => centerSelectedRadar(true));
   ui.catalogButton?.addEventListener("click", openArchiveCatalog);
+  ui.exportFramesButton?.addEventListener("click", exportCurrentFrameManifest);
   ui.closeCatalogDialog?.addEventListener("click", () => ui.catalogDialog?.close());
   ui.catalogSearch?.addEventListener("input", renderCatalog);
   ui.catalogPreset?.addEventListener("change", renderCatalog);
@@ -1236,6 +1238,106 @@ function currentArchiveTargetTime(date, time) {
   const link = state.archiveLink;
   if (link?.iso && link.date === date && link.time === time) return link.iso;
   return new Date(`${date}T${time}:00Z`).toISOString();
+}
+
+function rawSourceDescriptor(frame) {
+  const candidates = [
+    frame,
+    frame?.frame,
+    frame?.sourceFrame,
+    frame?.source,
+    frame?.metadata,
+    frame?.frame?.frame,
+    frame?.frame?.sourceFrame,
+    frame?.sourceFrame?.frame,
+    frame?.sourceFrame?.source,
+  ].filter(Boolean);
+  const source = candidates.find((candidate) => candidate.url || candidate.key || candidate.objectKey)
+    || candidates[0]
+    || frame;
+  const metadata = source?.metadata || frame?.metadata || {};
+  const url = source?.url || source?.href || metadata.url || "";
+  const key = source?.key || source?.objectKey || metadata.key || "";
+  const id = source?.id || source?.identity || metadata.id || key.split("/").pop() || url.split("/").pop() || "frame";
+  return {
+    id,
+    key,
+    url,
+    provider: source?.provider || metadata.provider || "",
+    format: source?.format || metadata.format || "",
+    size: Number(source?.size || metadata.size || 0) || null,
+    time: extractFrameTime(source)?.toISOString() || extractFrameTime(frame)?.toISOString() || "",
+  };
+}
+
+function currentRawFrameDescriptors() {
+  const count = currentFrameCount();
+  const frames = [];
+  for (let index = 0; index < count; index += 1) {
+    const frame = state.source === "archive"
+      ? state.loop?.archiveWindow?.frames?.[index] || getArchiveSourceFrame(index)
+      : state.source === "live" ? liveFrameAt(index) : null;
+    const descriptor = rawSourceDescriptor(frame);
+    if (!descriptor.url && !descriptor.key) continue;
+    frames.push({ index, ...descriptor });
+  }
+
+  const seen = new Set();
+  return frames.filter((frame) => {
+    const key = frame.url || frame.key || `${frame.id}:${frame.time}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function safeFilenamePart(value) {
+  return String(value || "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "frames";
+}
+
+function downloadTextFile(filename, text, type = "text/plain") {
+  const blob = new Blob([text], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportCurrentFrameManifest() {
+  const frames = currentRawFrameDescriptors();
+  if (!frames.length) {
+    showToast("Load an archive or live loop before exporting frame URLs");
+    return;
+  }
+
+  const generated = new Date().toISOString();
+  const firstTime = frames[0]?.time || generated;
+  const title = [
+    "# Meowdar S3 frame export",
+    `# generated_utc=${generated}`,
+    `# site=${state.site}`,
+    `# source=${state.source}`,
+    `# product=${state.product}`,
+    `# frames=${frames.length}`,
+    "#",
+    "# index time id size url",
+  ];
+  const rows = frames.map((frame) => [
+    frame.index,
+    frame.time || "unknown-time",
+    frame.id || "unknown-id",
+    frame.size || "",
+    frame.url || frame.key,
+  ].join(" "));
+  const text = `${title.concat(rows).join("\n")}\n`;
+  const stamp = safeFilenamePart(firstTime.replace(/[-:]/g, "").replace(".000Z", "Z"));
+  const filename = `meowdar-${safeFilenamePart(state.site)}-${stamp}-${frames.length}-s3-frames.txt`;
+  downloadTextFile(filename, text);
+  showToast(`Exported ${frames.length} S3 frame URL${frames.length === 1 ? "" : "s"}`);
 }
 
 function escapeHtml(value = "") {

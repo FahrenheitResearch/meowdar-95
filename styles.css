@@ -271,6 +271,19 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
   .status-panel:nth-child(2), .status-grow { display: none; }
   .palette-toolbar, .palette-options { grid-template-columns: 1fr; }
   .palette-stops { max-height: 250px; }
+  .catalog-dialog { width: calc(100vw - 8px); height: calc(100dvh - 8px); max-height: calc(100dvh - 8px); }
+  .catalog-shell { height: 100%; max-height: none; }
+  .catalog-body { flex: 1; overflow: hidden; padding: 6px; gap: 6px; }
+  .catalog-controls { grid-template-columns: 1fr; gap: 6px; }
+  .catalog-controls .win-field { grid-template-columns: 82px minmax(0,1fr); }
+  .catalog-controls .mini-status { margin-top: 0; white-space: normal; }
+  .catalog-grid { flex: 1; grid-template-columns: 1fr; grid-template-rows: minmax(150px,32dvh) minmax(260px,1fr); gap: 6px; overflow: hidden; }
+  .catalog-list-panel, .catalog-detail-panel { min-width: 0; min-height: 0; }
+  .catalog-day-list { height: 100%; }
+  .catalog-detail-panel { height: 100%; padding: 8px; }
+  .catalog-day { grid-template-columns: 76px 46px minmax(0,1fr); gap: 5px; padding: 6px; }
+  .catalog-target-head { align-items: flex-start; }
+  .catalog-radar-row button { flex: 1 1 88px; }
 }
 
 @media (max-width: 430px) {
@@ -286,4 +299,8 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
   .background-progress { width: calc(100% - 20px); }
   .transport-window { gap: 4px; }
   .transport-buttons button { width: 34px; }
+  .catalog-controls .win-field { grid-template-columns: 1fr; gap: 3px; }
+  .catalog-grid { grid-template-rows: minmax(125px,28dvh) minmax(285px,1fr); }
+  .catalog-detail-panel h3 { font-size: 14px; }
+  .catalog-target { padding: 6px; }
 }
