@@ -1,6 +1,7 @@
 // Meowdar is static and client-rendered. OpenStreetMap data is shown through
 // a configurable raster tile endpoint; switch providers here if traffic grows.
 window.MEOWDAR_CONFIG = {
+  experimentalPolarRenderer: true,
   radarSites: {
     // CAFIRE handoff: leave allowedSites as "all" for the full BowEcho catalog,
     // or switch activePreset / allowedSites to a regional/custom list.

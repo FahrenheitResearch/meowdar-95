@@ -182,6 +182,9 @@ const state = {
   loadGeneration: 0,
   backgroundGeneration: 0,
   livePollTimer: null,
+  liveFrameHoldUntil: 0,
+  liveFrameHoldKey: null,
+  liveFrameHoldTime: null,
   demoTimes: [],
   map: null,
   mapReady: false,
@@ -1183,6 +1186,7 @@ function scheduleLiveBackgroundLoop(generation, profile) {
       state.snapshot = state.session.snapshot?.() || state.snapshot;
       await moveLiveToLatest();
       await settleLiveSnapshot();
+      schedulePolarLoopPreload();
       showToast(`${liveFrameCount()}-scan loop ready`);
     } catch (error) {
       console.warn("Background loop expansion failed; keeping the first scan.", error);
@@ -1257,6 +1261,7 @@ function scheduleArchiveBackgroundLoop(generation, date, targetTime) {
       state.loop = expanded;
       state.frameIndex = archiveFrameCount() - 1;
       await settleArchiveFrame();
+      schedulePolarLoopPreload();
       showToast(`${archiveFrameCount()}-scan archive loop ready`);
     } catch (error) {
       console.warn("Archive loop expansion failed; keeping the first scan.", error);
@@ -1298,6 +1303,9 @@ async function settleArchiveFrame() {
 function cleanupRadarSession({ preserveGeneration = false } = {}) {
   clearTimeout(state.livePollTimer);
   state.livePollTimer = null;
+  state.liveFrameHoldUntil = 0;
+  state.liveFrameHoldKey = null;
+  state.liveFrameHoldTime = null;
   state.backgroundGeneration += 1;
   state.loopBuilding = false;
   hideBackgroundProgress();
@@ -1328,8 +1336,8 @@ function frameIdentity(frame) {
   const metadata = source?.metadata || frame?.metadata || {};
   const key = source?.identity ?? source?.cacheKey ?? source?.key ?? source?.objectKey ?? source?.url ?? source?.id
     ?? metadata.identity ?? metadata.cacheKey ?? metadata.key ?? metadata.url ?? metadata.id;
-  const time = extractFrameTime(frame)?.toISOString() || extractFrameTime(source)?.toISOString() || "unknown";
-  return `${state.site}:${key || time}`;
+  const time = extractFrameTime(frame)?.toISOString() || extractFrameTime(source)?.toISOString();
+  return `${state.site}:${time || key || "unknown"}`;
 }
 
 function currentSourceFrame() {
@@ -1412,7 +1420,11 @@ function syncSessionSnapshot(snapshot) {
   if (!snapshot) return;
   const cuts = snapshot.cuts || snapshot.capabilities?.cuts || readSessionCuts();
   if (Array.isArray(cuts) && cuts.length) state.allCuts = cuts;
-  if (Number.isInteger(snapshot.index)) state.frameIndex = snapshot.index;
+  if (Number.isInteger(snapshot.index)) {
+    const count = Math.max(1, Number(snapshot.timeline?.length || snapshot.frameCount || currentFrameCount()));
+    const snapshotIsLatest = snapshot.index >= count - 1;
+    if (!(liveFrameHoldActive(count) && snapshotIsLatest)) state.frameIndex = snapshot.index;
+  }
   syncTimeline();
   if (snapshot.error) showToast(friendlyError(snapshot.error));
 
@@ -1427,6 +1439,8 @@ function syncSessionSnapshot(snapshot) {
 async function settleLiveSnapshot() {
   const settlementGeneration = ++state.snapshotSettleGeneration;
   const diagnosticsGeneration = ++state.diagnosticsGeneration;
+  const heldKey = state.liveFrameHoldKey;
+  if (heldKey && liveFrameHoldActive()) await restoreLiveHeldFrame(heldKey);
   const frame = state.session?.currentFrame?.();
   if (!frame) return false;
   const key = frameIdentity(frame);
@@ -1443,7 +1457,11 @@ async function settleLiveSnapshot() {
   if (settlementGeneration !== state.snapshotSettleGeneration || state.source !== "live") return false;
 
   state.snapshot = state.session?.snapshot?.() || state.snapshot;
-  if (Number.isInteger(state.snapshot?.index)) state.frameIndex = state.snapshot.index;
+  if (Number.isInteger(state.snapshot?.index)) {
+    const count = Math.max(1, Number(state.snapshot?.timeline?.length || state.snapshot?.frameCount || currentFrameCount()));
+    const snapshotIsLatest = state.snapshot.index >= count - 1;
+    if (!(liveFrameHoldActive(count) && snapshotIsLatest)) state.frameIndex = state.snapshot.index;
+  }
   const displayFrame = state.followLatestLow
     ? await renderAdaptiveLowSweepFrame(current, { sourceFrame: current?.frame || current?.sourceFrame || current })
     : current;
@@ -1862,6 +1880,13 @@ async function renderAdaptiveLowSweepFrame(frame, { sourceFrame = null } = {}) {
     ...overrides,
   });
   if (!rendered) return frame;
+  if (typeof rendered === "object") {
+    rendered.sourceFrame = rendered.sourceFrame || source;
+    const sourceTime = extractFrameTime(source);
+    if (sourceTime && rendered.timestamp == null && rendered.time == null && rendered.scanTime == null) {
+      rendered.timestamp = sourceTime.toISOString();
+    }
+  }
   state.adaptiveFrameCache.set(key, rendered);
   while (state.adaptiveFrameCache.size > adaptiveFrameCacheLimit()) {
     state.adaptiveFrameCache.delete(state.adaptiveFrameCache.keys().next().value);
@@ -2031,6 +2056,24 @@ function schedulePolarRadarLayer(frame) {
       removePolarRadarLayer();
       setRadarRasterFallbackVisible(true);
     });
+}
+
+function schedulePolarLoopPreload() {
+  if (!POLAR_RENDER_EXPERIMENT || state.profile !== "full" || typeof state.toolbox?.renderNativePpi !== "function") return;
+  const frames = state.source === "live" ? state.session?.frames : state.loop?.frames;
+  if (!Array.isArray(frames) || frames.length < 2) return;
+  const generation = state.polarLayerGeneration;
+  scheduleIdle(async () => {
+    for (const frame of frames) {
+      if (state.source === "preview" || generation !== state.polarLayerGeneration) return;
+      try {
+        await buildPolarLayerData(frame);
+      } catch (error) {
+        console.debug("Polar loop frame preload skipped", error);
+      }
+    }
+    updatePolarDebug({ status: state.polarLayerData ? "active" : "preloaded", cacheSize: state.polarFrameCache.size });
+  });
 }
 
 function updatePolarDebug(update) {
@@ -2526,8 +2569,86 @@ function liveFrameCount() {
   return Math.max(1, Number(state.snapshot?.frameCount || state.session?.length || 1));
 }
 
+function liveFrameAt(index) {
+  const frame = typeof state.session?.frame === "function" ? state.session.frame(index) : null;
+  if (frame) return frame;
+  const frames = state.snapshot?.frames;
+  return Array.isArray(frames) ? frames[index] : null;
+}
+
+function liveFrameTimeAt(index) {
+  const timeline = state.snapshot?.timeline;
+  const timelineTime = Array.isArray(timeline) ? timelineEntryDate(timeline[index])?.toISOString() : null;
+  if (timelineTime) return timelineTime;
+  const frameTime = extractFrameTime(liveFrameAt(index));
+  return frameTime ? frameTime.toISOString() : null;
+}
+
+function clearLiveFrameHold() {
+  state.liveFrameHoldUntil = 0;
+  state.liveFrameHoldKey = null;
+  state.liveFrameHoldTime = null;
+}
+
+function rememberLiveFrameHold(count = currentFrameCount()) {
+  if (state.source !== "live" || state.frameIndex >= Math.max(0, count - 1)) {
+    clearLiveFrameHold();
+    return;
+  }
+  state.liveFrameHoldUntil = Date.now() + 60_000;
+  const frame = liveFrameAt(state.frameIndex) || state.session?.currentFrame?.();
+  state.liveFrameHoldKey = frame ? frameIdentity(frame) : state.liveFrameHoldKey;
+  state.liveFrameHoldTime = liveFrameTimeAt(state.frameIndex) || state.liveFrameHoldTime;
+}
+
+async function restoreLiveHeldFrame(heldKey = state.liveFrameHoldKey, fallbackIndex = state.frameIndex) {
+  const heldTime = state.liveFrameHoldTime;
+  if (state.source !== "live" || !state.session || !liveFrameHoldActive() || (!heldKey && !heldTime)) return false;
+  const count = Math.max(1, liveFrameCount());
+  let target = -1;
+  if (heldTime) {
+    for (let i = 0; i < count; i += 1) {
+      if (liveFrameTimeAt(i) === heldTime) {
+        target = i;
+        break;
+      }
+    }
+  }
+  if (target < 0 && heldKey) {
+    for (let i = 0; i < count; i += 1) {
+      const frame = liveFrameAt(i);
+      if (!frame || frameIdentity(frame) !== heldKey) continue;
+      target = i;
+      break;
+    }
+  }
+  if (target < 0) target = Math.min(Math.max(0, Number(fallbackIndex) || 0), Math.max(0, count - 2));
+  if (typeof state.session.setFrame === "function") {
+    await state.session.setFrame(target);
+  } else {
+    while (state.frameIndex > target) {
+      if (typeof state.session.previousFrame !== "function") break;
+      await state.session.previousFrame();
+      state.frameIndex -= 1;
+    }
+    while (state.frameIndex < target) {
+      if (typeof state.session.nextFrame !== "function") break;
+      await state.session.nextFrame();
+      state.frameIndex += 1;
+    }
+  }
+  state.snapshot = state.session.snapshot?.() || state.snapshot;
+  state.frameIndex = Number.isInteger(state.snapshot?.index) ? state.snapshot.index : target;
+  const restored = liveFrameAt(state.frameIndex) || state.session?.currentFrame?.();
+  state.liveFrameHoldKey = restored ? frameIdentity(restored) : heldKey;
+  state.liveFrameHoldTime = liveFrameTimeAt(state.frameIndex) || heldTime;
+  state.liveFrameHoldUntil = Date.now() + 60_000;
+  return true;
+}
+
 async function moveLiveToLatest() {
   if (!state.session) return;
+  clearLiveFrameHold();
   const target = Math.max(0, liveFrameCount() - 1);
   if (typeof state.session.latestFrame === "function") {
     await state.session.latestFrame();
@@ -2595,31 +2716,13 @@ function timelineEntryDate(entry) {
 async function stepFrame(direction) {
   const count = currentFrameCount();
   if (count < 2) return;
-  if (state.source === "live" && state.session) {
-    try {
-      if (direction > 0 && typeof state.session.nextFrame === "function") {
-        await state.session.nextFrame({ wrap: true });
-      } else if (direction < 0 && typeof state.session.previousFrame === "function") {
-        await state.session.previousFrame({ wrap: true });
-      } else {
-        await goToFrame((state.frameIndex + direction + count) % count);
-        return;
-      }
-      state.snapshot = state.session.snapshot?.() || state.snapshot;
-      if (Number.isInteger(state.snapshot?.index)) state.frameIndex = state.snapshot.index;
-      await settleLiveSnapshot();
-      syncTimeline();
-    } catch (error) {
-      console.warn("Could not step live radar frame", error);
-    }
-    return;
-  }
   await goToFrame((state.frameIndex + direction + count) % count);
 }
 
 async function goToFrame(index) {
   const count = currentFrameCount();
   state.frameIndex = Math.max(0, Math.min(index, count - 1));
+  if (state.source === "live") rememberLiveFrameHold(count);
   syncTimeline();
 
   try {
@@ -2639,6 +2742,7 @@ async function goToFrame(index) {
       }
       state.snapshot = state.session?.snapshot?.() || state.snapshot;
       if (Number.isInteger(state.snapshot?.index)) state.frameIndex = state.snapshot.index;
+      rememberLiveFrameHold();
       await settleLiveSnapshot();
     }
   } catch (error) {
@@ -2720,11 +2824,16 @@ function scheduleLivePoll() {
     const generation = state.loadGeneration;
     if (!document.hidden && state.source === "live" && session?.poll && !state.isPlaying && !state.loopBuilding) {
       try {
+        const wasFollowingLatest = !liveFrameHoldActive() && state.frameIndex >= currentFrameCount() - 1;
+        const heldKey = state.liveFrameHoldKey;
+        const heldIndex = state.frameIndex;
         invalidateCurrentDiagnostics(session.currentFrame?.());
         await session.poll(radarOptions({ mode: "live", frameCount: state.loopCount }));
         if (generation !== state.loadGeneration || session !== state.session || state.source !== "live") return;
         state.snapshot = session.snapshot?.() || state.snapshot;
-        await moveLiveToLatest();
+        if (heldKey && liveFrameHoldActive()) await restoreLiveHeldFrame(heldKey, heldIndex);
+        if (wasFollowingLatest) await moveLiveToLatest();
+        else syncSessionSnapshot(state.snapshot);
         if (generation !== state.loadGeneration || session !== state.session || state.source !== "live") return;
         await settleLiveSnapshot();
         if (state.loopCount > 1 && liveFrameCount() < state.loopCount) {
@@ -3057,6 +3166,13 @@ function normalizeLoopCount(value) {
   const allowed = [1, 3, 6, 12, 24, 36, 48, 72, 96];
   const numeric = Number(value);
   return allowed.includes(numeric) ? numeric : DEFAULTS.loopCount;
+}
+
+function liveFrameHoldActive(count = currentFrameCount()) {
+  return state.source === "live"
+    && Number(state.liveFrameHoldUntil) > 0
+    && Date.now() < state.liveFrameHoldUntil
+    && state.frameIndex < Math.max(1, count) - 1;
 }
 
 function friendlyError(error) {
