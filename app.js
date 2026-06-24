@@ -145,6 +145,7 @@ const PROFILES = {
 const URL_LINK = parseUrlLink(URL_PARAMS);
 const SPC_ARCHIVE_DATA_BASE = MAP_CONFIG.archiveCatalog?.dataBaseUrl || "https://fahrenheitresearch.github.io/spc-enhanced-day-classification/data";
 const CATALOG_TARGET_LIMIT = 20;
+const CATALOG_TARGET_KIND_RESERVE = 5;
 
 const DEFAULTS = {
   site: chooseDefaultRadarSite("KMUX"),
@@ -1492,7 +1493,7 @@ function reportMagnitude(report) {
 
 function catalogReportScore(report, preferredKind) {
   const kindBase = report.kind === "tornado" ? 3500 : report.kind === "wind" ? 2500 : report.kind === "hail" ? 2200 : 1000;
-  const preferred = preferredKind && report.kind === preferredKind ? 20000 : 0;
+  const preferred = preferredKind && report.kind === preferredKind ? 3500 : 0;
   const magnitude = report.kind === "hail" ? reportMagnitude(report) * 900 : reportMagnitude(report) * 35;
   return kindBase + preferred + magnitude;
 }
@@ -1536,19 +1537,51 @@ function buildCatalogTargets(record, eventDay) {
     })
     .filter((target) => target.radars.length);
 
-  const selected = [];
-  const seen = new Set();
+  const uniqueTargets = [];
+  const duplicateKeys = new Set();
   for (const target of reports.sort((a, b) => b.score - a.score)) {
-    const hour = String(target.report.timeUtc).slice(0, 13);
-    const latBucket = Math.round(Number(target.report.lat) * 2) / 2;
-    const lonBucket = Math.round(Number(target.report.lon) * 2) / 2;
-    const key = `${target.report.kind}:${hour}:${latBucket}:${lonBucket}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const key = catalogTargetDedupeKey(target);
+    if (duplicateKeys.has(key)) continue;
+    duplicateKeys.add(key);
+    uniqueTargets.push(target);
+  }
+
+  const kindOrder = catalogTargetKindOrder(preferredKind, uniqueTargets);
+  const grouped = new Map(kindOrder.map((kind) => [kind, uniqueTargets.filter((target) => (target.report.kind || "other") === kind)]));
+  const selected = [];
+  const selectedIds = new Set();
+  for (const kind of kindOrder) {
+    const candidates = grouped.get(kind) || [];
+    const reserve = Math.min(CATALOG_TARGET_KIND_RESERVE, candidates.length);
+    for (const target of candidates.slice(0, reserve)) {
+      selected.push(target);
+      selectedIds.add(target.id);
+      if (selected.length >= CATALOG_TARGET_LIMIT) return selected;
+    }
+  }
+  for (const target of uniqueTargets) {
+    if (selectedIds.has(target.id)) continue;
     selected.push(target);
+    selectedIds.add(target.id);
     if (selected.length >= CATALOG_TARGET_LIMIT) break;
   }
   return selected;
+}
+
+function catalogTargetDedupeKey(target) {
+  const hour = String(target.report.timeUtc).slice(0, 13);
+  const latBucket = Math.round(Number(target.report.lat) * 2) / 2;
+  const lonBucket = Math.round(Number(target.report.lon) * 2) / 2;
+  return `${target.report.kind || "other"}:${hour}:${latBucket}:${lonBucket}`;
+}
+
+function catalogTargetKindOrder(preferredKind, targets) {
+  const available = new Set(targets.map((target) => target.report.kind || "other"));
+  const order = [preferredKind, "tornado", "wind", "hail", "other"].filter(Boolean);
+  for (const kind of available) {
+    if (!order.includes(kind)) order.push(kind);
+  }
+  return order.filter((kind, index) => available.has(kind) && order.indexOf(kind) === index);
 }
 
 function renderCatalogDetail(record, { loading = false, eventDay = null, targets = [], error = null } = {}) {
@@ -1564,6 +1597,15 @@ function renderCatalogDetail(record, { loading = false, eventDay = null, targets
     acc[report.kind] = (acc[report.kind] || 0) + 1;
     return acc;
   }, {}) || {};
+  const targetCounts = targets.reduce((acc, target) => {
+    const kind = target.report.kind || "other";
+    acc[kind] = (acc[kind] || 0) + 1;
+    return acc;
+  }, {});
+  const targetMix = ["wind", "hail", "tornado", "other"]
+    .filter((kind) => targetCounts[kind])
+    .map((kind) => `${targetCounts[kind]} ${kind}`)
+    .join(", ");
   ui.catalogDetail.innerHTML = `
     <h3>${escapeHtml(record.day)} - ${escapeHtml(formatCatalogClass(record.primary))}</h3>
     <p>${escapeHtml(record.narrative || "")}</p>
@@ -1571,7 +1613,7 @@ function renderCatalogDetail(record, { loading = false, eventDay = null, targets
     <p class="catalog-muted">${escapeHtml(record.ofb_reason || "")}</p>
     ${loading ? `<p class="catalog-empty">Generating report-based radar targets...</p>` : ""}
     ${error ? `<p class="catalog-empty">Could not generate targets: ${escapeHtml(friendlyError(error))}</p>` : ""}
-    ${eventDay ? `<p class="catalog-muted">SPC reports: ${reportCounts.wind || 0} wind, ${reportCounts.hail || 0} hail, ${reportCounts.tornado || 0} tornado. Showing top ${targets.length} ranked radar targets.</p>` : ""}
+    ${eventDay ? `<p class="catalog-muted">SPC reports: ${reportCounts.wind || 0} wind, ${reportCounts.hail || 0} hail, ${reportCounts.tornado || 0} tornado. Showing ${targets.length} balanced radar targets${targetMix ? ` (${escapeHtml(targetMix)})` : ""}.</p>` : ""}
     ${targets.length ? `<div class="catalog-target-list">${targets.map(renderCatalogTarget).join("")}</div>` : (!loading && !error ? `<p class="catalog-empty">No report-based targets found for this day.</p>` : "")}
   `;
 }
