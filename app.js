@@ -1496,7 +1496,10 @@ function catalogDayText(record) {
 }
 
 async function catalogJson(path) {
-  const response = await fetch(`${SPC_ARCHIVE_DATA_BASE}/${path}`);
+  const url = new URL(`${SPC_ARCHIVE_DATA_BASE}/${path}`, window.location.href);
+  const version = new URLSearchParams(window.location.search).get("v");
+  if (version) url.searchParams.set("v", version);
+  const response = await fetch(url, { cache: "no-cache" });
   if (!response.ok) throw new Error(`catalog ${path} HTTP ${response.status}`);
   return response.json();
 }
