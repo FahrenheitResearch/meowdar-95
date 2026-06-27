@@ -201,7 +201,7 @@ kbd { min-width: 22px; padding: 2px 4px; text-align: center; background: #e8e8e8
 .dialog-body { padding: 8px; }
 .catalog-shell { display: flex; flex-direction: column; max-height: calc(100dvh - 24px); }
 .catalog-body { min-height: 0; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
-.catalog-controls { display: grid; grid-template-columns: minmax(220px,1fr) 240px minmax(180px,320px); gap: 8px; align-items: center; }
+.catalog-controls { display: grid; grid-template-columns: minmax(220px,1fr) 220px 170px minmax(180px,320px); gap: 8px; align-items: center; }
 .catalog-controls .win-field { margin: 0; }
 .catalog-grid { min-height: 0; display: grid; grid-template-columns: 360px minmax(0,1fr); gap: 8px; }
 .catalog-list-panel, .catalog-detail-panel { min-height: 0; background: #fff; border-top: 2px solid #808080; border-left: 2px solid #808080; border-right: 2px solid #fff; border-bottom: 2px solid #fff; }

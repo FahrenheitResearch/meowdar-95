@@ -328,6 +328,7 @@ const ui = {
   closeCatalogDialog: $("closeCatalogDialog"),
   catalogSearch: $("catalogSearch"),
   catalogPreset: $("catalogPreset"),
+  catalogTornadoState: $("catalogTornadoState"),
   catalogStatus: $("catalogStatus"),
   catalogCount: $("catalogCount"),
   catalogDayList: $("catalogDayList"),
@@ -598,6 +599,7 @@ function bindEvents() {
   ui.closeCatalogDialog?.addEventListener("click", () => ui.catalogDialog?.close());
   ui.catalogSearch?.addEventListener("input", renderCatalog);
   ui.catalogPreset?.addEventListener("change", renderCatalog);
+  ui.catalogTornadoState?.addEventListener("change", renderCatalog);
   ui.catalogDayList?.addEventListener("click", (event) => {
     const button = event.target.closest("button[data-day]");
     if (button) void selectCatalogDay(button.dataset.day);
@@ -1473,11 +1475,15 @@ function formatCatalogClass(value = "") {
 }
 
 function catalogDayText(record) {
+  const tornadoStates = Object.entries(state.catalog.summary?.days?.[record.day]?.state_counts || {})
+    .map(([torState, count]) => `${torState} tornado ${count}`)
+    .join(" ");
   return [
     record.day,
     record.risk,
     record.primary,
     record.ofb,
+    tornadoStates,
     record.ofb_reason,
     record.narrative,
     ...(record.secondary || []),
@@ -1515,6 +1521,7 @@ async function ensureArchiveCatalog() {
     ]);
     state.catalog.records = records.sort((a, b) => b.day.localeCompare(a.day));
     state.catalog.summary = summary;
+    populateCatalogTornadoStates();
     ui.catalogStatus.textContent = `${records.length.toLocaleString()} classified days loaded`;
     renderCatalog();
   } catch (error) {
@@ -1523,6 +1530,27 @@ async function ensureArchiveCatalog() {
   } finally {
     state.catalog.loading = false;
   }
+}
+
+function catalogTornadoStateCounts(record) {
+  return state.catalog.summary?.days?.[record.day]?.state_counts || {};
+}
+
+function populateCatalogTornadoStates() {
+  if (!ui.catalogTornadoState) return;
+  const selected = ui.catalogTornadoState.value;
+  const counts = {};
+  for (const day of Object.values(state.catalog.summary?.days || {})) {
+    for (const torState of Object.keys(day.state_counts || {})) counts[torState] = (counts[torState] || 0) + 1;
+  }
+  ui.catalogTornadoState.innerHTML = `<option value="">All states</option>`;
+  for (const [torState, count] of Object.entries(counts).sort(([a], [b]) => a.localeCompare(b))) {
+    const option = document.createElement("option");
+    option.value = torState;
+    option.textContent = `${torState} (${count})`;
+    ui.catalogTornadoState.appendChild(option);
+  }
+  if (selected && counts[selected]) ui.catalogTornadoState.value = selected;
 }
 
 function catalogMatchesPreset(record, preset) {
@@ -1538,8 +1566,10 @@ function catalogMatchesPreset(record, preset) {
 function renderCatalog() {
   const query = String(ui.catalogSearch?.value || "").trim().toLowerCase();
   const preset = ui.catalogPreset?.value || "all";
+  const tornadoState = ui.catalogTornadoState?.value || "";
   const filtered = state.catalog.records.filter((record) => {
     if (!catalogMatchesPreset(record, preset)) return false;
+    if (tornadoState && !catalogTornadoStateCounts(record)[tornadoState]) return false;
     return !query || catalogDayText(record).includes(query);
   });
   state.catalog.filtered = filtered;
@@ -1984,7 +2014,10 @@ function catalogTargetLabel(report) {
 function catalogTargetMeta(target) {
   const report = target.report || {};
   const meta = [];
-  if (target.source === "tornado-target") meta.push("surveyed track");
+  if (target.source === "tornado-target") {
+    const source = String(target.event?.source || "").toLowerCase();
+    meta.push(source.includes("preliminary") ? "preliminary report" : "surveyed track");
+  }
   const path = Number(report.pathLengthMi);
   if (Number.isFinite(path) && path > 0) meta.push(`${trimNumber(path)} mi path`);
   const width = Number(report.widthYd);
